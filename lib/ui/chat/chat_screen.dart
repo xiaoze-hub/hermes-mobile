@@ -9,6 +9,7 @@ import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
 import '../sessions/session_drawer.dart';
 import '../settings/gateway_settings_dialog.dart';
+import '../settings/gateway_management_screen.dart';
 import 'chat_input_bar.dart';
 import 'thinking_bubble.dart';
 import 'tool_card.dart';
@@ -371,6 +372,14 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: '网关管理',
+            icon: const Icon(Icons.tune),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) =>
+                  GatewayManagementScreen(gateway: widget.gatewayService),
+            )),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined, size: 20),
             onPressed: () {

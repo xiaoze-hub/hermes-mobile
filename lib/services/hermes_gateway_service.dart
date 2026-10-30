@@ -87,6 +87,45 @@ class HermesGatewayService {
     }
   }
 
+  Future<Map<String, dynamic>> getModelInfo() async =>
+      Map<String, dynamic>.from(
+          (await _dio.get('/api/model/info')).data as Map);
+
+  Future<Map<String, dynamic>> getModelOptions() async =>
+      Map<String, dynamic>.from((await _dio.get('/api/model/options',
+              queryParameters: {'include_unconfigured': 1}))
+          .data as Map);
+
+  Future<Map<String, dynamic>> setModel(
+          {required String provider,
+          required String model,
+          String? baseUrl}) async =>
+      Map<String, dynamic>.from((await _dio.post('/api/model/set', data: {
+        'scope': 'main',
+        'provider': provider,
+        'model': model,
+        if (baseUrl != null && baseUrl.isNotEmpty) 'base_url': baseUrl,
+      }))
+          .data as Map);
+
+  Future<Map<String, dynamic>> checkForUpdate() async =>
+      Map<String, dynamic>.from(
+          (await _dio.get('/api/hermes/update/check')).data as Map);
+
+  Future<Map<String, dynamic>> restartGateway() async =>
+      Map<String, dynamic>.from(
+          (await _dio.post('/api/gateway/restart')).data as Map);
+
+  Future<Map<String, dynamic>> updateHermes() async =>
+      Map<String, dynamic>.from(
+          (await _dio.post('/api/hermes/update')).data as Map);
+
+  Future<Map<String, dynamic>> getActionStatus(String name) async =>
+      Map<String, dynamic>.from((await _dio.get(
+              '/api/actions/${Uri.encodeComponent(name)}/status',
+              queryParameters: {'lines': 50}))
+          .data as Map);
+
   Future<HermesSession> createSession({String title = '新会话'}) async {
     if (!_jsonRpc) {
       try {
