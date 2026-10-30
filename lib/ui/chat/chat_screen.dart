@@ -469,6 +469,79 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildWelcome() {
+    final suggestions = <(IconData, String)>[
+      (Icons.lightbulb_outline, '介绍一下你能做什么'),
+      (Icons.travel_explore_outlined, '帮我研究一个问题'),
+      (Icons.summarize_outlined, '总结一段内容'),
+      (Icons.code, '帮我看一段代码'),
+    ];
+    final canSend = _connectionStatus == ConnectionStatus.connected;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: HermesTheme.surfaceLight,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(Icons.auto_awesome,
+                    size: 26, color: HermesTheme.textMain),
+              ),
+              const SizedBox(height: 22),
+              const Text(
+                '今天想做点什么？',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 25,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.4),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                canSend ? '向 Hermes 提问、写作、分析或处理任务。' : '连接网关后即可开始新对话。',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: HermesTheme.textMuted, fontSize: 14, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: suggestions
+                    .map((suggestion) => OutlinedButton.icon(
+                          onPressed: canSend
+                              ? () => _sendMessage(suggestion.$2)
+                              : null,
+                          icon: Icon(suggestion.$1, size: 17),
+                          label: Text(suggestion.$2),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            foregroundColor: HermesTheme.textMain,
+                            side: const BorderSide(color: HermesTheme.border),
+                            shape: const StadiumBorder(),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _statusSub?.cancel();
@@ -491,39 +564,60 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          if (_currentModel.isNotEmpty)
-            TextButton.icon(
-              onPressed: _showModelPicker,
-              icon: const Icon(Icons.auto_awesome, size: 16),
-              label: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 112),
-                child: Text(_currentModel.split('/').last,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+          TextButton.icon(
+            onPressed: _showModelPicker,
+            icon: const Icon(Icons.auto_awesome, size: 16),
+            label: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 88),
+              child: Text(
+                _currentModel.isEmpty ? '模型' : _currentModel.split('/').last,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              style:
-                  TextButton.styleFrom(foregroundColor: HermesTheme.textMain),
             ),
-          IconButton(
-            tooltip: '网关管理',
-            icon: const Icon(Icons.tune),
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) =>
-                  GatewayManagementScreen(gateway: widget.gatewayService),
-            )),
+            style: TextButton.styleFrom(foregroundColor: HermesTheme.textMain),
           ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 20),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => GatewaySettingsDialog(
-                  gatewayService: widget.gatewayService,
-                  onSaved: () {
-                    _loadOrRestoreSession();
-                  },
-                ),
-              );
+            tooltip: '新建对话',
+            icon: const Icon(Icons.edit_square),
+            onPressed: _createNewSession,
+          ),
+          PopupMenuButton<String>(
+            tooltip: '更多选项',
+            onSelected: (action) {
+              if (action == 'gateway') {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) =>
+                      GatewayManagementScreen(gateway: widget.gatewayService),
+                ));
+              } else if (action == 'settings') {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => GatewaySettingsDialog(
+                    gatewayService: widget.gatewayService,
+                    onSaved: _loadOrRestoreSession,
+                  ),
+                );
+              }
             },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'gateway',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.tune),
+                  title: Text('网关管理'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 'settings',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.settings_outlined),
+                  title: Text('连接设置'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -567,13 +661,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ]),
                       ))
                     : _messages.isEmpty && !_hasOlder
-                        ? const Center(
-                            child: Text(
-                              "向远程 Hermes Agent 发送第一条指令...",
-                              style: TextStyle(
-                                  color: HermesTheme.textMuted, fontSize: 13),
-                            ),
-                          )
+                        ? _buildWelcome()
                         : ListView.builder(
                             controller: _scrollController,
                             padding: const EdgeInsets.symmetric(
@@ -593,147 +681,187 @@ class _ChatScreenState extends State<ChatScreen> {
                                   _messages[index - (_hasOlder ? 1 : 0)];
                               final isUser = msg.role == MessageRole.user;
 
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: isUser
-                                      ? MainAxisAlignment.end
-                                      : MainAxisAlignment.start,
-                                  children: [
-                                    if (!isUser) ...[
-                                      Container(
-                                        width: 26,
-                                        height: 26,
-                                        margin: const EdgeInsets.only(
-                                            right: 8, top: 2),
-                                        decoration: BoxDecoration(
-                                          color: HermesTheme.primary
-                                              .withOpacity(0.2),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                            Icons.smart_toy_outlined,
-                                            size: 15,
-                                            color: HermesTheme.primary),
-                                      ),
-                                    ],
-                                    Flexible(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 14, vertical: 10),
-                                        decoration: BoxDecoration(
-                                          color: isUser
-                                              ? HermesTheme.surfaceLight
-                                              : Colors.transparent,
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(
-                                            color: Colors.transparent,
+                              return Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 820),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment: isUser
+                                          ? MainAxisAlignment.end
+                                          : MainAxisAlignment.start,
+                                      children: [
+                                        if (!isUser) ...[
+                                          Container(
+                                            width: 26,
+                                            height: 26,
+                                            margin: const EdgeInsets.only(
+                                                right: 8, top: 2),
+                                            decoration: BoxDecoration(
+                                              color: HermesTheme.primary
+                                                  .withOpacity(0.2),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                                Icons.smart_toy_outlined,
+                                                size: 15,
+                                                color: HermesTheme.primary),
                                           ),
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            if (!isUser &&
-                                                msg.thinking.isNotEmpty) ...[
-                                              ThinkingBubble(
-                                                thinking: msg.thinking,
-                                                isStreaming: msg.isStreaming,
-                                              ),
-                                            ],
-                                            if (!isUser &&
-                                                msg.toolCalls.isNotEmpty) ...[
-                                              for (final tool in msg.toolCalls)
-                                                ToolCard(toolCall: tool),
-                                            ],
-                                            if (isUser)
-                                              SelectableText(
-                                                msg.content,
-                                                style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 14),
-                                              )
-                                            else
-                                              MarkdownBody(
-                                                data: msg.content.isEmpty &&
-                                                        msg.isStreaming
-                                                    ? "▍"
-                                                    : msg.content,
-                                                styleSheet: MarkdownStyleSheet
-                                                        .fromTheme(
-                                                            Theme.of(context))
-                                                    .copyWith(
-                                                  p: const TextStyle(
-                                                      fontSize: 14,
-                                                      color:
-                                                          HermesTheme.textMain,
-                                                      height: 1.5),
-                                                  code: const TextStyle(
-                                                    fontFamily: 'monospace',
-                                                    backgroundColor:
-                                                        Color(0xFF1E222D),
-                                                    fontSize: 12,
-                                                  ),
+                                        ],
+                                        Flexible(
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints(
+                                              maxWidth: isUser
+                                                  ? (MediaQuery.sizeOf(context)
+                                                              .width <
+                                                          720
+                                                      ? MediaQuery.sizeOf(
+                                                                  context)
+                                                              .width *
+                                                          0.78
+                                                      : 620)
+                                                  : 760,
+                                            ),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 14,
+                                                      vertical: 10),
+                                              decoration: BoxDecoration(
+                                                color: isUser
+                                                    ? HermesTheme.surfaceLight
+                                                    : Colors.transparent,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color: Colors.transparent,
                                                 ),
                                               ),
-                                            if (!isUser &&
-                                                msg.content.isNotEmpty &&
-                                                !msg.isStreaming)
-                                              Wrap(
-                                                spacing: 2,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
-                                                  IconButton(
-                                                    tooltip: '复制回复',
-                                                    visualDensity:
-                                                        VisualDensity.compact,
-                                                    icon: const Icon(
-                                                        Icons.content_copy,
-                                                        size: 16),
-                                                    onPressed: () {
-                                                      Clipboard.setData(
-                                                          ClipboardData(
-                                                              text:
-                                                                  msg.content));
-                                                      ScaffoldMessenger.of(
-                                                              context)
-                                                          .showSnackBar(
-                                                              const SnackBar(
-                                                                  content: Text(
-                                                                      '已复制回复')));
-                                                    },
-                                                  ),
-                                                  if (index ==
-                                                      _messages.length - 1)
-                                                    IconButton(
-                                                      tooltip: '重新生成',
-                                                      visualDensity:
-                                                          VisualDensity.compact,
-                                                      icon: const Icon(
-                                                          Icons.refresh,
-                                                          size: 17),
-                                                      onPressed:
-                                                          _regenerateLastReply,
+                                                  if (!isUser &&
+                                                      msg.thinking
+                                                          .isNotEmpty) ...[
+                                                    ThinkingBubble(
+                                                      thinking: msg.thinking,
+                                                      isStreaming:
+                                                          msg.isStreaming,
+                                                    ),
+                                                  ],
+                                                  if (!isUser &&
+                                                      msg.toolCalls
+                                                          .isNotEmpty) ...[
+                                                    for (final tool
+                                                        in msg.toolCalls)
+                                                      ToolCard(toolCall: tool),
+                                                  ],
+                                                  if (isUser)
+                                                    SelectableText(
+                                                      msg.content,
+                                                      style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 14),
+                                                    )
+                                                  else
+                                                    MarkdownBody(
+                                                      data: msg.content
+                                                                  .isEmpty &&
+                                                              msg.isStreaming
+                                                          ? "▍"
+                                                          : msg.content,
+                                                      styleSheet:
+                                                          MarkdownStyleSheet
+                                                                  .fromTheme(
+                                                                      Theme.of(
+                                                                          context))
+                                                              .copyWith(
+                                                        p: const TextStyle(
+                                                            fontSize: 14,
+                                                            color: HermesTheme
+                                                                .textMain,
+                                                            height: 1.5),
+                                                        code: const TextStyle(
+                                                          fontFamily:
+                                                              'monospace',
+                                                          backgroundColor:
+                                                              Color(0xFF1E222D),
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  if (!isUser &&
+                                                      msg.content.isNotEmpty &&
+                                                      !msg.isStreaming)
+                                                    Wrap(
+                                                      spacing: 2,
+                                                      children: [
+                                                        IconButton(
+                                                          tooltip: '复制回复',
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                          icon: const Icon(
+                                                              Icons
+                                                                  .content_copy,
+                                                              size: 16),
+                                                          onPressed: () {
+                                                            Clipboard.setData(
+                                                                ClipboardData(
+                                                                    text: msg
+                                                                        .content));
+                                                            ScaffoldMessenger
+                                                                    .of(context)
+                                                                .showSnackBar(
+                                                                    const SnackBar(
+                                                                        content:
+                                                                            Text('已复制回复')));
+                                                          },
+                                                        ),
+                                                        if (index ==
+                                                            _messages.length -
+                                                                1)
+                                                          IconButton(
+                                                            tooltip: '重新生成',
+                                                            visualDensity:
+                                                                VisualDensity
+                                                                    .compact,
+                                                            icon: const Icon(
+                                                                Icons.refresh,
+                                                                size: 17),
+                                                            onPressed:
+                                                                _regenerateLastReply,
+                                                          ),
+                                                      ],
                                                     ),
                                                 ],
                                               ),
-                                          ],
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  ],
+                                  ),
                                 ),
                               );
                             },
                           ),
           ),
-          ChatInputBar(
-            onSend: _sendMessage,
-            isConnected: _connectionStatus == ConnectionStatus.connected &&
-                !_loadingHistory &&
-                _historyError == null &&
-                !_messages.any((message) => message.isStreaming),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: ChatInputBar(
+                onSend: _sendMessage,
+                isConnected: _connectionStatus == ConnectionStatus.connected &&
+                    !_loadingHistory &&
+                    _historyError == null &&
+                    !_messages.any((message) => message.isStreaming),
+              ),
+            ),
           ),
         ],
       ),
