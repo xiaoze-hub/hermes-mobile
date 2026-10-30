@@ -46,11 +46,12 @@ class _GatewayManagementScreenState extends State<GatewayManagementScreen> {
         _loading = false;
       });
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _loading = false;
         });
+      }
     }
   }
 
@@ -87,11 +88,12 @@ class _GatewayManagementScreenState extends State<GatewayManagementScreen> {
         await _refresh();
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _notice = '切换失败：$e';
           _working = false;
         });
+      }
     }
   }
 
@@ -159,20 +161,22 @@ class _GatewayManagementScreenState extends State<GatewayManagementScreen> {
         } catch (_) {
           if (attempt >= 20) {
             timer.cancel();
-            if (mounted)
+            if (mounted) {
               setState(() {
                 _working = false;
                 _notice = '等待网关恢复超时，请手动刷新状态。';
               });
+            }
           }
         }
       });
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _working = false;
           _notice = '操作失败：$e';
         });
+      }
     }
   }
 
