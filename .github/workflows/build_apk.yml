@@ -28,6 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           flutter create . --platforms=android --project-name hermes_mobile --no-pub
+          rm -f test/widget_test.dart
           flutter pub get
 
       - name: Analyze code
