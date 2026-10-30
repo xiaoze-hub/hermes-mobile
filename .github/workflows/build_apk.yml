@@ -28,7 +28,12 @@ jobs:
       - name: Scaffold platform and install dependencies
         run: |
           flutter create . --platforms=android --project-name hermes_mobile --no-pub
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>' android/app/src/main/AndroidManifest.xml
+          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
           flutter pub get
+
+      - name: Analyze code
+        run: flutter analyze
 
       - name: Build APK (Release)
         run: flutter build apk --release
