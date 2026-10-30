@@ -37,6 +37,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loadingOlder = false;
   final List<Map<String, dynamic>> _pendingEvents = [];
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
+  String _currentModel = '';
 
   StreamSubscription? _statusSub;
   StreamSubscription? _streamSub;
@@ -54,7 +55,125 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _streamSub = widget.gatewayService.streamEvents.listen(_handleStreamEvent);
 
+    _loadCurrentModel();
+
     _loadOrRestoreSession();
+  }
+
+  Future<void> _loadCurrentModel() async {
+    try {
+      final info = await widget.gatewayService.getModelInfo();
+      if (!mounted) return;
+      setState(() => _currentModel = [
+            info['provider']?.toString(),
+            info['model']?.toString(),
+          ].where((part) => part != null && part.isNotEmpty).join('/'));
+    } catch (_) {
+      // Model info is an optional enhancement; chat remains available if absent.
+    }
+  }
+
+  Future<void> _showModelPicker() async {
+    try {
+      final result = await widget.gatewayService.getModelOptions();
+      final providers = result['providers'];
+      final options = <Map<String, String>>[];
+      if (providers is List) {
+        for (final rawProvider in providers.whereType<Map>()) {
+          final provider =
+              (rawProvider['slug'] ?? rawProvider['name'] ?? '').toString();
+          final models = rawProvider['models'];
+          if (models is! List) continue;
+          for (final model in models) {
+            final id = model is Map
+                ? (model['id'] ?? model['model'] ?? model['name']).toString()
+                : model.toString();
+            final label = model is Map
+                ? (model['name'] ?? model['id'] ?? model['model']).toString()
+                : id;
+            if (provider.isNotEmpty && id.isNotEmpty) {
+              options.add({'provider': provider, 'id': id, 'label': label});
+            }
+          }
+        }
+      }
+      if (!mounted) return;
+      if (options.isEmpty) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('网关没有返回可用模型')));
+        return;
+      }
+      final selected = await showModalBottomSheet<Map<String, String>>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(4, 4, 4, 12),
+                child: Text('选择模型',
+                    style:
+                        TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              ),
+              ...options.map((option) {
+                final name = '${option['provider']}/${option['id']}';
+                return ListTile(
+                  leading: Icon(
+                      name == _currentModel
+                          ? Icons.check_circle
+                          : Icons.auto_awesome,
+                      color: name == _currentModel
+                          ? HermesTheme.accent
+                          : HermesTheme.textMuted),
+                  title: Text(option['label']!),
+                  subtitle: Text(option['provider']!),
+                  onTap: () => Navigator.pop(context, option),
+                );
+              }),
+            ],
+          ),
+        ),
+      );
+      if (selected == null || !mounted) return;
+      await widget.gatewayService
+          .setModel(provider: selected['provider']!, model: selected['id']!);
+      await _loadCurrentModel();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('已切换到 ${selected['label']}')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('模型切换失败：$error')));
+      }
+    }
+  }
+
+  void _regenerateLastReply() {
+    if (_messages.isEmpty ||
+        _messages.last.role != MessageRole.assistant ||
+        _messages.last.isStreaming) return;
+    final assistantIndex = _messages.length - 1;
+    if (assistantIndex == 0 ||
+        _messages[assistantIndex - 1].role != MessageRole.user) return;
+    final prompt = _messages[assistantIndex - 1].content;
+    setState(() {
+      _messages.removeRange(assistantIndex, _messages.length);
+      _messages.add(ChatMessage.assistant(isStreaming: true));
+    });
+    try {
+      widget.gatewayService
+          .sendMessage(sessionId: _activeSession!.id, text: prompt);
+    } catch (error) {
+      setState(() {
+        _messages.last.content = '发送失败：$error';
+        _messages.last.isStreaming = false;
+      });
+    }
   }
 
   Future<void> _loadOrRestoreSession() async {
@@ -372,6 +491,18 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          if (_currentModel.isNotEmpty)
+            TextButton.icon(
+              onPressed: _showModelPicker,
+              icon: const Icon(Icons.auto_awesome, size: 16),
+              label: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 112),
+                child: Text(_currentModel.split('/').last,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              style:
+                  TextButton.styleFrom(foregroundColor: HermesTheme.textMain),
+            ),
           IconButton(
             tooltip: '网关管理',
             icon: const Icon(Icons.tune),
@@ -517,29 +648,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                               for (final tool in msg.toolCalls)
                                                 ToolCard(toolCall: tool),
                                             ],
-                                            if (!isUser &&
-                                                msg.content.isNotEmpty &&
-                                                !msg.isStreaming)
-                                              Align(
-                                                  alignment:
-                                                      Alignment.centerRight,
-                                                  child: IconButton(
-                                                    tooltip: '复制回复',
-                                                    icon: const Icon(Icons.copy,
-                                                        size: 17),
-                                                    onPressed: () {
-                                                      Clipboard.setData(
-                                                          ClipboardData(
-                                                              text:
-                                                                  msg.content));
-                                                      ScaffoldMessenger.of(
-                                                              context)
-                                                          .showSnackBar(
-                                                              const SnackBar(
-                                                                  content: Text(
-                                                                      '已复制回复')));
-                                                    },
-                                                  )),
                                             if (isUser)
                                               SelectableText(
                                                 msg.content,
@@ -569,6 +677,46 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     fontSize: 12,
                                                   ),
                                                 ),
+                                              ),
+                                            if (!isUser &&
+                                                msg.content.isNotEmpty &&
+                                                !msg.isStreaming)
+                                              Wrap(
+                                                spacing: 2,
+                                                children: [
+                                                  IconButton(
+                                                    tooltip: '复制回复',
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    icon: const Icon(
+                                                        Icons.content_copy,
+                                                        size: 16),
+                                                    onPressed: () {
+                                                      Clipboard.setData(
+                                                          ClipboardData(
+                                                              text:
+                                                                  msg.content));
+                                                      ScaffoldMessenger.of(
+                                                              context)
+                                                          .showSnackBar(
+                                                              const SnackBar(
+                                                                  content: Text(
+                                                                      '已复制回复')));
+                                                    },
+                                                  ),
+                                                  if (index ==
+                                                      _messages.length - 1)
+                                                    IconButton(
+                                                      tooltip: '重新生成',
+                                                      visualDensity:
+                                                          VisualDensity.compact,
+                                                      icon: const Icon(
+                                                          Icons.refresh,
+                                                          size: 17),
+                                                      onPressed:
+                                                          _regenerateLastReply,
+                                                    ),
+                                                ],
                                               ),
                                           ],
                                         ),

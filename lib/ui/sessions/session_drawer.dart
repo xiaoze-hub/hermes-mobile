@@ -170,6 +170,59 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                     Navigator.of(context).pop();
                                     widget.onSelectSession(session);
                                   },
+                                  trailing: PopupMenuButton<String>(
+                                    tooltip: '会话操作',
+                                    icon: const Icon(Icons.more_horiz,
+                                        size: 19, color: HermesTheme.textMuted),
+                                    onSelected: (action) async {
+                                      if (action != 'delete') return;
+                                      final confirmed = await showDialog<bool>(
+                                        context: context,
+                                        builder: (context) => AlertDialog(
+                                          title: const Text('删除这条对话？'),
+                                          content: Text(
+                                              '“${session.title}”将从网关历史中删除。此操作无法撤销。'),
+                                          actions: [
+                                            TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                    context, false),
+                                                child: const Text('取消')),
+                                            FilledButton(
+                                                onPressed: () => Navigator.pop(
+                                                    context, true),
+                                                child: const Text('删除')),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirmed != true) return;
+                                      try {
+                                        await widget.gatewayService
+                                            .deleteSession(session.id);
+                                        if (!context.mounted) return;
+                                        setState(() => _sessions.removeWhere(
+                                            (item) => item.id == session.id));
+                                        if (session.id ==
+                                            widget.activeSessionId) {
+                                          Navigator.of(context).pop();
+                                          widget.onNewSession();
+                                        }
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content: Text('对话已删除')));
+                                      } catch (error) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(SnackBar(
+                                                  content:
+                                                      Text('删除失败：$error')));
+                                        }
+                                      }
+                                    },
+                                    itemBuilder: (context) => const [
+                                      PopupMenuItem(
+                                          value: 'delete', child: Text('删除对话')),
+                                    ],
+                                  ),
                                 );
                               },
                             ),
