@@ -34,11 +34,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.fromLTRB(
+      padding: const EdgeInsets.fromLTRB(
         12,
         8,
         12,
-        8 + MediaQuery.of(context).viewInsets.bottom,
+        8,
       ),
       decoration: const BoxDecoration(
         color: HermesTheme.surface,
@@ -55,10 +55,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 maxLines: 4,
                 minLines: 1,
                 keyboardType: TextInputType.multiline,
-                style: const TextStyle(fontSize: 14, color: HermesTheme.textMain),
+                style:
+                    const TextStyle(fontSize: 14, color: HermesTheme.textMain),
                 decoration: InputDecoration(
-                  hintText: widget.isConnected ? "给远程 Hermes 发送指令..." : "网关未连接，请检查配置...",
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  hintText: widget.isConnected
+                      ? "给远程 Hermes 发送指令..."
+                      : "网关未连接，请检查配置...",
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 ),
                 onSubmitted: (_) => _handleSend(),
               ),
@@ -69,8 +73,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
               icon: const Icon(Icons.arrow_upward, size: 20),
               style: IconButton.styleFrom(
                 backgroundColor: HermesTheme.primary,
+                foregroundColor: HermesTheme.background,
                 disabledBackgroundColor: HermesTheme.surfaceLight,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
               ),
             ),
           ],
