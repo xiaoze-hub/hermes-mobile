@@ -61,7 +61,7 @@ class _GatewayManagementScreenState extends State<GatewayManagementScreen> {
       final provider = p['slug']?.toString() ?? p['name']?.toString() ?? '';
       final models = p['models'];
       if (models is! List) return <Map<String, dynamic>>[];
-      return models.map((m) => {
+      return models.map<Map<String, dynamic>>((m) => {
             'provider': provider,
             'model': m is Map
                 ? (m['id'] ?? m['model'] ?? m['name']).toString()
