@@ -50,6 +50,9 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
     try {
       final local = Map<String, dynamic>.from(
           await _channel.invokeMethod<Map>('getAppUpdateInfo') ?? {});
+      if (!mounted) return;
+      setState(() => _currentVersion =
+          '${local['version'] ?? '未知'}+${local['buildNumber'] ?? '?'}');
       final response = await _dio.get<Map<String, dynamic>>(
         _manifestUrl,
         options: Options(responseType: ResponseType.json),
@@ -166,7 +169,14 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
   String _friendlyError(Object error) {
     if (error is DioException) {
       if (error.response?.statusCode == 404) return '暂时没有发布可用版本。';
-      return '检查更新失败，请确认网络可访问 GitHub 后重试。';
+      if (error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.receiveTimeout) {
+        return '连接更新服务超时，请检查网络后点右上角重试。';
+      }
+      if (error.response != null) {
+        return '更新服务返回错误（${error.response?.statusCode}），请稍后重试。';
+      }
+      return '无法连接更新服务，请检查 GitHub 网络连接后点右上角重试。';
     }
     return error is StateError ? error.message : '更新失败，请稍后重试。';
   }
@@ -226,10 +236,12 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
               const SizedBox(height: 18),
               if (_checking && release == null)
                 const LinearProgressIndicator()
-              else if (_error != null)
+              else if (_error != null) ...[
                 Text(_error!,
-                    style: const TextStyle(color: HermesTheme.warning))
-              else if (release != null) ...[
+                    style: const TextStyle(color: HermesTheme.warning)),
+                const SizedBox(height: 12),
+              ],
+              if (release != null) ...[
                 Text(available ? '发现新版本 ${release['_version']}' : '当前已是最新版本',
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w600)),

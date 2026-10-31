@@ -3,9 +3,10 @@ import 'package:flutter/services.dart';
 import '../../core/theme.dart';
 
 class ChatInputBar extends StatefulWidget {
-  final Future<void> Function(String text, List<ChatPickedFile> attachments)
+  final Future<bool> Function(String text, List<ChatPickedFile> attachments)
       onSend;
   final bool isConnected;
+  final bool draftReady;
   final bool isStreaming;
   final VoidCallback? onStop;
   final String draftText;
@@ -17,6 +18,7 @@ class ChatInputBar extends StatefulWidget {
     super.key,
     required this.onSend,
     required this.isConnected,
+    this.draftReady = true,
     this.isStreaming = false,
     this.onStop,
     this.draftText = '',
@@ -166,17 +168,23 @@ class _ChatInputBarState extends State<ChatInputBar> {
         _sending) return;
     setState(() => _sending = true);
     try {
-      await widget.onSend(text, List.unmodifiable(_attachments));
+      final sent = await widget.onSend(text, List.unmodifiable(_attachments));
       if (!mounted) return;
+      if (!sent) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('消息未确认发送，草稿已保留。重试前请先检查对话记录。'),
+        ));
+        return;
+      }
       _controller.clear();
       setState(() => _attachments.clear());
       widget.onDraftTextChanged?.call('');
       widget.onDraftAttachmentsChanged?.call(const []);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('附件未能发送，已保留草稿：$error'),
-          duration: const Duration(seconds: 5),
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('附件上传失败，草稿已保留，请检查连接后重试。'),
+          duration: Duration(seconds: 5),
         ));
       }
     } finally {
@@ -276,7 +284,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 Expanded(
                   child: TextField(
                     controller: _controller,
-                    enabled: !_sending,
+                    enabled: !_sending && widget.draftReady,
                     maxLines: 4,
                     minLines: 1,
                     keyboardType: TextInputType.multiline,

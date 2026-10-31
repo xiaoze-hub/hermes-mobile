@@ -31,8 +31,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _messages = [];
   final List<HermesSession> _sessions = [];
   final Map<String, String> _drafts = {};
+  final Set<String> _loadedDrafts = {};
+  final Set<String> _loadingDrafts = {};
+  final Map<String, Future<void>> _draftWrites = {};
   final Map<String, List<ChatPickedFile>> _draftAttachments = {};
   final ScrollController _scrollController = ScrollController();
+  bool _followLatest = true;
   final HermesStorage _storage = HermesStorage();
 
   HermesSession? _activeSession;
@@ -442,6 +446,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _switchSession(HermesSession session) {
     setState(() {
       _activeSession = session;
+      _followLatest = true;
       _messages.clear();
       _approvals.clear();
       _pendingEvents.clear();
@@ -452,6 +457,23 @@ class _ChatScreenState extends State<ChatScreen> {
       _historyError = null;
     });
     _storage.saveLastSessionId(session.id);
+    if (!_loadedDrafts.contains(session.id) && _loadingDrafts.add(session.id)) {
+      _storage.loadDraft(session.id).then((value) {
+        if (!mounted) return;
+        setState(() {
+          _drafts[session.id] = value ?? '';
+          _loadedDrafts.add(session.id);
+          _loadingDrafts.remove(session.id);
+        });
+      }).catchError((_) {
+        if (mounted) {
+          setState(() {
+            _loadedDrafts.add(session.id);
+            _loadingDrafts.remove(session.id);
+          });
+        }
+      });
+    }
     widget.gatewayService.connectWebSocket(session.id);
     _loadSessionHistory(session.id);
   }
@@ -485,7 +507,7 @@ class _ChatScreenState extends State<ChatScreen> {
       for (final event in pending) {
         _handleStreamEvent(event);
       }
-      _scrollToBottom();
+      _scrollToBottom(force: true);
     } catch (error) {
       if (!mounted ||
           request != _historyRequest ||
@@ -674,16 +696,18 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  Future<void> _sendMessage(String text) =>
-      _sendMessageWithAttachments(text, const []);
+  Future<void> _sendMessage(String text) async {
+    await _sendMessageWithAttachments(text, const []);
+  }
 
-  Future<void> _sendMessageWithAttachments(
+  Future<bool> _sendMessageWithAttachments(
       String text, List<ChatPickedFile> attachments) async {
     final session = _activeSession;
-    if (session == null) return;
+    if (session == null) return false;
     final refs = attachments.isEmpty
         ? <String>[]
         : await _uploadAttachments(session.id, attachments);
+    if (!mounted || _activeSession?.id != session.id) return false;
     final names = attachments.map((file) => file.name).toList();
     final visibleText =
         text.trim().isEmpty && names.isNotEmpty ? '请查看并处理这些附件。' : text;
@@ -705,7 +729,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await widget.gatewayService
           .sendMessage(sessionId: session.id, text: outgoingText);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || _activeSession?.id != session.id) return false;
       setState(() {
         if (placeholder != null) {
           placeholder.content = _sendErrorText(e);
@@ -716,9 +740,11 @@ class _ChatScreenState extends State<ChatScreen> {
           )..content = _sendErrorText(e));
         }
       });
+      return false;
     }
 
-    _scrollToBottom();
+    _scrollToBottom(force: true);
+    return true;
   }
 
   String _sendErrorText(Object error) {
@@ -736,7 +762,9 @@ class _ChatScreenState extends State<ChatScreen> {
     return '无法读取对话内容，请检查网关连接后重试。';
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool force = false}) {
+    if (!force && !_followLatest) return;
+    if (force && !_followLatest) setState(() => _followLatest = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -1099,310 +1127,369 @@ class _ChatScreenState extends State<ChatScreen> {
                         ))
                       : _messages.isEmpty && !_hasOlder
                           ? _buildWelcome()
-                          : ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 12),
-                              itemCount: _messages.length + (_hasOlder ? 1 : 0),
-                              itemBuilder: (context, index) {
-                                if (_hasOlder && index == 0) {
-                                  return Center(
-                                      child: TextButton(
-                                          onPressed:
-                                              _loadingOlder ? null : _loadOlder,
-                                          child: Text(_loadingOlder
-                                              ? '加载中…'
-                                              : '加载更早的消息')));
-                                }
-                                final msg =
-                                    _messages[index - (_hasOlder ? 1 : 0)];
-                                final isUser = msg.role == MessageRole.user;
+                          : Stack(children: [
+                              NotificationListener<UserScrollNotification>(
+                                  onNotification: (notification) {
+                                    final follow =
+                                        notification.metrics.extentAfter < 120;
+                                    if (follow != _followLatest) {
+                                      setState(() => _followLatest = follow);
+                                    }
+                                    return false;
+                                  },
+                                  child: ListView.builder(
+                                    controller: _scrollController,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 12),
+                                    itemCount:
+                                        _messages.length + (_hasOlder ? 1 : 0),
+                                    itemBuilder: (context, index) {
+                                      if (_hasOlder && index == 0) {
+                                        return Center(
+                                            child: TextButton(
+                                                onPressed: _loadingOlder
+                                                    ? null
+                                                    : _loadOlder,
+                                                child: Text(_loadingOlder
+                                                    ? '加载中…'
+                                                    : '加载更早的消息')));
+                                      }
+                                      final msg = _messages[
+                                          index - (_hasOlder ? 1 : 0)];
+                                      final isUser =
+                                          msg.role == MessageRole.user;
 
-                                return Center(
-                                  child: ConstrainedBox(
-                                    constraints:
-                                        const BoxConstraints(maxWidth: 820),
-                                    child: Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 16),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisAlignment: isUser
-                                            ? MainAxisAlignment.end
-                                            : MainAxisAlignment.start,
-                                        children: [
-                                          if (!isUser) ...[
-                                            Container(
-                                              width: 26,
-                                              height: 26,
-                                              margin: const EdgeInsets.only(
-                                                  right: 8, top: 2),
-                                              decoration: BoxDecoration(
-                                                color: HermesTheme.primary
-                                                    .withOpacity(0.2),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: const Icon(
-                                                  Icons.smart_toy_outlined,
-                                                  size: 15,
-                                                  color: HermesTheme.primary),
-                                            ),
-                                          ],
-                                          Flexible(
-                                            child: ConstrainedBox(
-                                              constraints: BoxConstraints(
-                                                maxWidth: isUser
-                                                    ? (MediaQuery.sizeOf(
-                                                                    context)
-                                                                .width <
-                                                            720
-                                                        ? MediaQuery.sizeOf(
-                                                                    context)
-                                                                .width *
-                                                            0.78
-                                                        : 620)
-                                                    : 760,
-                                              ),
-                                              child: Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 14,
-                                                        vertical: 10),
-                                                decoration: BoxDecoration(
-                                                  color: isUser
-                                                      ? HermesTheme.surfaceLight
-                                                      : Colors.transparent,
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                  border: Border.all(
-                                                    color: Colors.transparent,
+                                      return Center(
+                                        child: ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                              maxWidth: 820),
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                                bottom: 16),
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisAlignment: isUser
+                                                  ? MainAxisAlignment.end
+                                                  : MainAxisAlignment.start,
+                                              children: [
+                                                if (!isUser) ...[
+                                                  Container(
+                                                    width: 26,
+                                                    height: 26,
+                                                    margin:
+                                                        const EdgeInsets.only(
+                                                            right: 8, top: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: HermesTheme.primary
+                                                          .withOpacity(0.2),
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: const Icon(
+                                                        Icons
+                                                            .smart_toy_outlined,
+                                                        size: 15,
+                                                        color: HermesTheme
+                                                            .primary),
                                                   ),
-                                                ),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    if (!isUser &&
-                                                        msg.thinking
-                                                            .isNotEmpty) ...[
-                                                      ThinkingBubble(
-                                                        thinking: msg.thinking,
-                                                        isStreaming:
-                                                            msg.isStreaming,
+                                                ],
+                                                Flexible(
+                                                  child: ConstrainedBox(
+                                                    constraints: BoxConstraints(
+                                                      maxWidth: isUser
+                                                          ? (MediaQuery.sizeOf(
+                                                                          context)
+                                                                      .width <
+                                                                  720
+                                                              ? MediaQuery.sizeOf(
+                                                                          context)
+                                                                      .width *
+                                                                  0.78
+                                                              : 620)
+                                                          : 760,
+                                                    ),
+                                                    child: Container(
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                          horizontal: 14,
+                                                          vertical: 10),
+                                                      decoration: BoxDecoration(
+                                                        color: isUser
+                                                            ? HermesTheme
+                                                                .surfaceLight
+                                                            : Colors
+                                                                .transparent,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(12),
+                                                        border: Border.all(
+                                                          color: Colors
+                                                              .transparent,
+                                                        ),
                                                       ),
-                                                    ],
-                                                    if (!isUser &&
-                                                        msg.toolCalls
-                                                            .isNotEmpty) ...[
-                                                      for (final tool
-                                                          in msg.toolCalls)
-                                                        ToolCard(
-                                                            toolCall: tool),
-                                                    ],
-                                                    if (isUser)
-                                                      Column(
+                                                      child: Column(
                                                         crossAxisAlignment:
                                                             CrossAxisAlignment
                                                                 .start,
                                                         children: [
-                                                          if (msg.attachments
-                                                              .isNotEmpty)
-                                                            Padding(
-                                                              padding:
-                                                                  const EdgeInsets
-                                                                      .only(
-                                                                      bottom:
-                                                                          8),
-                                                              child: Wrap(
-                                                                spacing: 6,
-                                                                runSpacing: 6,
-                                                                children: msg
+                                                          if (!isUser &&
+                                                              msg.thinking
+                                                                  .isNotEmpty) ...[
+                                                            ThinkingBubble(
+                                                              thinking:
+                                                                  msg.thinking,
+                                                              isStreaming: msg
+                                                                  .isStreaming,
+                                                            ),
+                                                          ],
+                                                          if (!isUser &&
+                                                              msg.toolCalls
+                                                                  .isNotEmpty) ...[
+                                                            for (final tool
+                                                                in msg
+                                                                    .toolCalls)
+                                                              ToolCard(
+                                                                  toolCall:
+                                                                      tool),
+                                                          ],
+                                                          if (isUser)
+                                                            Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .start,
+                                                              children: [
+                                                                if (msg
                                                                     .attachments
-                                                                    .map(
-                                                                        (name) =>
-                                                                            Chip(
-                                                                              avatar: const Icon(Icons.attach_file, size: 16),
-                                                                              label: Text(name, overflow: TextOverflow.ellipsis),
-                                                                              visualDensity: VisualDensity.compact,
-                                                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                                            ))
-                                                                    .toList(),
+                                                                    .isNotEmpty)
+                                                                  Padding(
+                                                                    padding: const EdgeInsets
+                                                                        .only(
+                                                                        bottom:
+                                                                            8),
+                                                                    child: Wrap(
+                                                                      spacing:
+                                                                          6,
+                                                                      runSpacing:
+                                                                          6,
+                                                                      children: msg
+                                                                          .attachments
+                                                                          .map((name) =>
+                                                                              Chip(
+                                                                                avatar: const Icon(Icons.attach_file, size: 16),
+                                                                                label: Text(name, overflow: TextOverflow.ellipsis),
+                                                                                visualDensity: VisualDensity.compact,
+                                                                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                                              ))
+                                                                          .toList(),
+                                                                    ),
+                                                                  ),
+                                                                SelectableText(
+                                                                  msg.content,
+                                                                  style: const TextStyle(
+                                                                      color: Colors
+                                                                          .white,
+                                                                      fontSize:
+                                                                          14),
+                                                                ),
+                                                                if (msg.content
+                                                                    .isNotEmpty)
+                                                                  Align(
+                                                                    alignment:
+                                                                        Alignment
+                                                                            .centerLeft,
+                                                                    child:
+                                                                        IconButton(
+                                                                      tooltip:
+                                                                          '复制提问',
+                                                                      visualDensity:
+                                                                          VisualDensity
+                                                                              .compact,
+                                                                      icon: const Icon(
+                                                                          Icons
+                                                                              .content_copy,
+                                                                          size:
+                                                                              15),
+                                                                      onPressed:
+                                                                          () {
+                                                                        Clipboard.setData(ClipboardData(
+                                                                            text:
+                                                                                msg.content));
+                                                                        ScaffoldMessenger.of(context)
+                                                                            .showSnackBar(
+                                                                          const SnackBar(
+                                                                              content: Text('已复制提问')),
+                                                                        );
+                                                                      },
+                                                                    ),
+                                                                  ),
+                                                              ],
+                                                            )
+                                                          else
+                                                            MarkdownBody(
+                                                              data: msg.content
+                                                                          .isEmpty &&
+                                                                      msg.isStreaming
+                                                                  ? "▍"
+                                                                  : msg.content,
+                                                              styleSheet: MarkdownStyleSheet
+                                                                      .fromTheme(
+                                                                          Theme.of(
+                                                                              context))
+                                                                  .copyWith(
+                                                                p: const TextStyle(
+                                                                    fontSize:
+                                                                        14,
+                                                                    color: HermesTheme
+                                                                        .textMain,
+                                                                    height:
+                                                                        1.5),
+                                                                code:
+                                                                    const TextStyle(
+                                                                  fontFamily:
+                                                                      'monospace',
+                                                                  backgroundColor:
+                                                                      Color(
+                                                                          0xFF1E222D),
+                                                                  fontSize: 12,
+                                                                ),
                                                               ),
                                                             ),
-                                                          SelectableText(
-                                                            msg.content,
-                                                            style: const TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontSize: 14),
-                                                          ),
-                                                          if (msg.content
-                                                              .isNotEmpty)
-                                                            Align(
-                                                              alignment: Alignment
-                                                                  .centerLeft,
-                                                              child: IconButton(
-                                                                tooltip: '复制提问',
-                                                                visualDensity:
-                                                                    VisualDensity
-                                                                        .compact,
-                                                                icon: const Icon(
-                                                                    Icons
-                                                                        .content_copy,
-                                                                    size: 15),
-                                                                onPressed: () {
-                                                                  Clipboard.setData(
-                                                                      ClipboardData(
-                                                                          text:
-                                                                              msg.content));
-                                                                  ScaffoldMessenger.of(
-                                                                          context)
-                                                                      .showSnackBar(
-                                                                    const SnackBar(
-                                                                        content:
-                                                                            Text('已复制提问')),
-                                                                  );
-                                                                },
-                                                              ),
-                                                            ),
-                                                        ],
-                                                      )
-                                                    else
-                                                      MarkdownBody(
-                                                        data: msg.content
-                                                                    .isEmpty &&
-                                                                msg.isStreaming
-                                                            ? "▍"
-                                                            : msg.content,
-                                                        styleSheet:
-                                                            MarkdownStyleSheet
-                                                                    .fromTheme(
-                                                                        Theme.of(
-                                                                            context))
-                                                                .copyWith(
-                                                          p: const TextStyle(
-                                                              fontSize: 14,
-                                                              color: HermesTheme
-                                                                  .textMain,
-                                                              height: 1.5),
-                                                          code: const TextStyle(
-                                                            fontFamily:
-                                                                'monospace',
-                                                            backgroundColor:
-                                                                Color(
-                                                                    0xFF1E222D),
-                                                            fontSize: 12,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    if (!isUser &&
-                                                        msg.content
-                                                            .isNotEmpty &&
-                                                        !msg.isStreaming)
-                                                      Wrap(
-                                                        spacing: 2,
-                                                        children: [
-                                                          IconButton(
-                                                            tooltip: '复制回复',
-                                                            visualDensity:
-                                                                VisualDensity
-                                                                    .compact,
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .content_copy,
-                                                                size: 16),
-                                                            onPressed: () {
-                                                              Clipboard.setData(
-                                                                  ClipboardData(
-                                                                      text: msg
-                                                                          .content));
-                                                              ScaffoldMessenger
-                                                                      .of(
-                                                                          context)
-                                                                  .showSnackBar(
-                                                                      const SnackBar(
-                                                                          content:
-                                                                              Text('已复制回复')));
-                                                            },
-                                                          ),
-                                                          IconButton(
-                                                            tooltip: '分享回复',
-                                                            visualDensity:
-                                                                VisualDensity
-                                                                    .compact,
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .share_outlined,
-                                                                size: 16),
-                                                            onPressed:
-                                                                () async {
-                                                              try {
-                                                                await const MethodChannel(
-                                                                        'com.hermes.mobile/files')
-                                                                    .invokeMethod<
-                                                                            void>(
-                                                                        'shareText',
-                                                                        {
-                                                                      'text': msg
-                                                                          .content
-                                                                    });
-                                                              } on PlatformException {
-                                                                if (context
-                                                                    .mounted) {
-                                                                  ScaffoldMessenger.of(
-                                                                          context)
-                                                                      .showSnackBar(
-                                                                    const SnackBar(
-                                                                        content:
-                                                                            Text('无法打开系统分享面板')),
-                                                                  );
-                                                                }
-                                                              }
-                                                            },
-                                                          ),
-                                                          if (index ==
-                                                              _messages.length -
-                                                                  1)
-                                                            IconButton(
-                                                              tooltip: '重新生成',
-                                                              visualDensity:
-                                                                  VisualDensity
-                                                                      .compact,
-                                                              icon: const Icon(
-                                                                  Icons.refresh,
-                                                                  size: 17),
-                                                              onPressed:
-                                                                  _regenerateLastReply,
+                                                          if (!isUser &&
+                                                              msg.content
+                                                                  .isNotEmpty &&
+                                                              !msg.isStreaming)
+                                                            Wrap(
+                                                              spacing: 2,
+                                                              children: [
+                                                                IconButton(
+                                                                  tooltip:
+                                                                      '复制回复',
+                                                                  visualDensity:
+                                                                      VisualDensity
+                                                                          .compact,
+                                                                  icon: const Icon(
+                                                                      Icons
+                                                                          .content_copy,
+                                                                      size: 16),
+                                                                  onPressed:
+                                                                      () {
+                                                                    Clipboard.setData(
+                                                                        ClipboardData(
+                                                                            text:
+                                                                                msg.content));
+                                                                    ScaffoldMessenger.of(
+                                                                            context)
+                                                                        .showSnackBar(const SnackBar(
+                                                                            content:
+                                                                                Text('已复制回复')));
+                                                                  },
+                                                                ),
+                                                                IconButton(
+                                                                  tooltip:
+                                                                      '分享回复',
+                                                                  visualDensity:
+                                                                      VisualDensity
+                                                                          .compact,
+                                                                  icon: const Icon(
+                                                                      Icons
+                                                                          .share_outlined,
+                                                                      size: 16),
+                                                                  onPressed:
+                                                                      () async {
+                                                                    try {
+                                                                      await const MethodChannel(
+                                                                              'com.hermes.mobile/files')
+                                                                          .invokeMethod<void>(
+                                                                              'shareText',
+                                                                              {
+                                                                            'text':
+                                                                                msg.content
+                                                                          });
+                                                                    } on PlatformException {
+                                                                      if (context
+                                                                          .mounted) {
+                                                                        ScaffoldMessenger.of(context)
+                                                                            .showSnackBar(
+                                                                          const SnackBar(
+                                                                              content: Text('无法打开系统分享面板')),
+                                                                        );
+                                                                      }
+                                                                    }
+                                                                  },
+                                                                ),
+                                                                if (index ==
+                                                                    _messages
+                                                                            .length -
+                                                                        1)
+                                                                  IconButton(
+                                                                    tooltip:
+                                                                        '重新生成',
+                                                                    visualDensity:
+                                                                        VisualDensity
+                                                                            .compact,
+                                                                    icon: const Icon(
+                                                                        Icons
+                                                                            .refresh,
+                                                                        size:
+                                                                            17),
+                                                                    onPressed:
+                                                                        _regenerateLastReply,
+                                                                  ),
+                                                              ],
                                                             ),
                                                         ],
                                                       ),
-                                                  ],
+                                                    ),
+                                                  ),
                                                 ),
-                                              ),
+                                              ],
                                             ),
                                           ),
-                                        ],
-                                      ),
-                                    ),
+                                        ),
+                                      );
+                                    },
+                                  )),
+                              if (!_followLatest)
+                                Positioned(
+                                  right: 20,
+                                  bottom: 12,
+                                  child: FloatingActionButton.small(
+                                    heroTag: 'latest-message',
+                                    tooltip: '返回最新消息',
+                                    onPressed: () =>
+                                        _scrollToBottom(force: true),
+                                    child: const Icon(Icons.arrow_downward),
                                   ),
-                                );
-                              },
-                            ),
+                                ),
+                            ]),
             ),
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 840),
                 child: ChatInputBar(
-                  key:
-                      ValueKey('chat-composer-${_activeSession?.id ?? 'none'}'),
+                  key: ValueKey(
+                      'chat-composer-${_activeSession?.id ?? 'none'}-${_loadedDrafts.contains(_activeSession?.id)}'),
                   onSend: _sendMessageWithAttachments,
+                  draftReady: _loadedDrafts.contains(_activeSession?.id),
                   draftText: _drafts[_activeSession?.id] ?? '',
                   draftAttachments:
                       _draftAttachments[_activeSession?.id] ?? const [],
                   onDraftTextChanged: (value) {
                     final id = _activeSession?.id;
-                    if (id != null) _drafts[id] = value;
+                    if (id != null) {
+                      _drafts[id] = value;
+                      final previous = _draftWrites[id] ?? Future<void>.value();
+                      _draftWrites[id] = previous
+                          .catchError((_) {})
+                          .then((_) => _storage.saveDraft(id, value))
+                          .catchError((_) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('草稿未能保存到设备，当前输入仍在页面中')));
+                        }
+                      });
+                    }
                   },
                   onDraftAttachmentsChanged: (files) {
                     final id = _activeSession?.id;
@@ -1412,6 +1499,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   onStop: _stopGeneration,
                   isConnected:
                       _connectionStatus == ConnectionStatus.connected &&
+                          _loadedDrafts.contains(_activeSession?.id) &&
                           !_loadingHistory &&
                           _historyError == null,
                 ),
