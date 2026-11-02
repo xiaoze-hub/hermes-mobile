@@ -57,11 +57,21 @@ jobs:
             exit 1
           }
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            analyze.log
+            build.log
+
       - name: Dump logs on failure
         if: failure()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git checkout -B ci-debug
           cp analyze.log ci_analyze.log 2>/dev/null || true
           tail -n 200 build.log > ci_build.log 2>/dev/null || true
