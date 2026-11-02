@@ -41,8 +41,21 @@ jobs:
       - name: Install dependencies and build APK
         run: |
           flutter pub get
-          flutter analyze || true
-          flutter build apk --release
+          flutter analyze > analyze.log 2>&1 || true
+          cat analyze.log
+          flutter build apk --release > build.log 2>&1 || {
+            echo "## BUILD FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "### Flutter Analyze Log" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat analyze.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "### Flutter Build APK Log" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 100 build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat build.log
+            exit 1
+          }
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
       - name: Create update manifest
         env:
