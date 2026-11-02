@@ -406,7 +406,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadPendingApprovals();
 
     try {
-      final rawMessages = await widget.gatewayService.getSessionMessages(sessionId, limit: 30);
+      final rawMessages = await widget.gatewayService.getSessionMessages(sessionId);
       if (!mounted || _activeSession?.id != sessionId) return;
 
       final List<ChatMessage> parsedList = [];
@@ -439,7 +439,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.clear();
         _messages.addAll(parsedList);
         _loadingHistory = false;
-        _hasOlder = rawMessages.length >= 30;
+        _hasOlder = rawMessages.length >= 100;
       });
 
       _scrollToBottom(force: true);
@@ -459,11 +459,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _loadingOlder = true);
     try {
-      final oldestId = _messages.first.id;
       final rawMessages = await widget.gatewayService.getSessionMessages(
         session.id,
-        beforeId: oldestId,
-        limit: 30,
+        offset: _messages.length,
       );
 
       if (!mounted || _activeSession?.id != session.id) return;
@@ -477,7 +475,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       setState(() {
         _messages.insertAll(0, older);
-        _hasOlder = rawMessages.length >= 30;
+        _hasOlder = rawMessages.length >= 100;
         _loadingOlder = false;
       });
     } catch (_) {
