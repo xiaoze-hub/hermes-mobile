@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import '../models/session.dart';
@@ -25,6 +26,11 @@ class HermesGatewayService {
   int _connectionGeneration = 0;
   bool _jsonRpc = false;
   Completer<void>? _rpcReady;
+  Completer<void>? _sessionReady;
+  String _resumingSessionId = '';
+  final Map<String, String> _runtimeSessionIds = {};
+  Object? _sessionResumeError;
+  final Set<String> _freshSessionIds = {};
   int _rpcId = 0;
   final Map<int, String> _rpcMethods = {};
   final Map<int, Completer<dynamic>> _rpcPending = {};
@@ -38,6 +44,96 @@ class HermesGatewayService {
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   Stream<Map<String, dynamic>> get streamEvents =>
       _streamEventController.stream;
+
+  bool get supportsJsonRpc => _jsonRpc;
+
+  Future<dynamic> callRpc(String method, Map<String, dynamic> params) async {
+    try {
+      await _rpcReady?.future.timeout(const Duration(seconds: 6));
+    } catch (_) {}
+    if (!_jsonRpc ||
+        _wsChannel == null ||
+        _connectionStatus != ConnectionStatus.connected) {
+      throw StateError('当前网关未建立 JSON-RPC 连接');
+    }
+    return _requestRpc(method, _withRuntimeSessionId(method, params));
+  }
+
+  Map<String, dynamic> _withRuntimeSessionId(
+      String method, Map<String, dynamic> params) {
+    if (method == 'session.resume' || params['session_id'] == null) {
+      return params;
+    }
+    final storedId = params['session_id'].toString();
+    final runtimeId = _runtimeSessionIds[storedId];
+    return runtimeId == null ? params : {...params, 'session_id': runtimeId};
+  }
+
+  void _captureRuntimeSessionId(String storedId, dynamic result) {
+    if (result is! Map) return;
+    final runtimeId = result['session_id']?.toString();
+    if (runtimeId != null && runtimeId.isNotEmpty) {
+      _runtimeSessionIds[storedId] = runtimeId;
+    }
+  }
+
+  Future<dynamic> interruptSession(String sessionId) =>
+      callRpc('session.interrupt', {'session_id': sessionId});
+
+  Future<List<Map<String, dynamic>>> getPendingApprovals(
+      String sessionId) async {
+    final result = await callRpc('approval.pending', {'session_id': sessionId});
+    final approvals = result is Map ? result['approvals'] : null;
+    return approvals is List
+        ? approvals
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : <Map<String, dynamic>>[];
+  }
+
+  Future<dynamic> respondApproval(
+          String sessionId, String requestId, String choice) =>
+      callRpc('approval.respond', {
+        'session_id': sessionId,
+        'request_id': requestId,
+        'choice': choice,
+      });
+
+  Future<dynamic> attachFile(
+          {required String sessionId,
+          required String name,
+          required String dataUrl}) =>
+      callRpc('file.attach',
+          {'session_id': sessionId, 'name': name, 'data_url': dataUrl});
+
+  Future<dynamic> attachImage(
+          {required String sessionId,
+          required String name,
+          required String base64}) =>
+      callRpc('image.attach_bytes', {
+        'session_id': sessionId,
+        'filename': name,
+        'content_base64': base64
+      });
+
+  Future<dynamic> attachPdf(
+          {required String sessionId,
+          required String name,
+          required String base64}) =>
+      callRpc('pdf.attach', {
+        'session_id': sessionId,
+        'filename': name,
+        'content_base64': base64
+      });
+
+  Future<Map<String, dynamic>> sessionContext(String sessionId) async {
+    final result =
+        await callRpc('session.context_breakdown', {'session_id': sessionId});
+    return result is Map
+        ? Map<String, dynamic>.from(result)
+        : <String, dynamic>{};
+  }
 
   HermesGatewayService({
     required this.serverUrl,
@@ -87,6 +183,33 @@ class HermesGatewayService {
     }
   }
 
+  /// Searches conversation titles and message contents on gateways that expose
+  /// the Hermes session search endpoint. `null` means an older gateway does
+  /// not implement this endpoint; callers can fall back to title-only search.
+  Future<List<HermesSession>?> searchSessions(String query) async {
+    try {
+      final response =
+          await _dio.get('/api/sessions/search', queryParameters: {'q': query});
+      final data = response.data;
+      final results = data is Map ? data['results'] : null;
+      if (results is! List) {
+        throw const FormatException('会话搜索结果格式无法识别');
+      }
+      return results
+          .whereType<Map>()
+          .map(
+              (item) => HermesSession.fromJson(Map<String, dynamic>.from(item)))
+          .where((session) => session.id.isNotEmpty)
+          .toList();
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404 ||
+          error.response?.statusCode == 405) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
   Future<Map<String, dynamic>> getModelInfo() async =>
       Map<String, dynamic>.from(
           (await _dio.get('/api/model/info')).data as Map);
@@ -130,7 +253,9 @@ class HermesGatewayService {
     if (!_jsonRpc) {
       try {
         final res = await _dio.post('/api/sessions', data: {'title': title});
-        return HermesSession.fromJson(res.data);
+        final session = HermesSession.fromJson(res.data);
+        _freshSessionIds.add(session.id);
+        return session;
       } catch (restError) {
         if (_connectionStatus != ConnectionStatus.connected) {
           await connectWebSocket('');
@@ -147,10 +272,15 @@ class HermesGatewayService {
     if (result is! Map || result['session_id'] == null) {
       throw const FormatException('网关未返回会话 ID');
     }
-    return HermesSession(
-        id: result['session_id'].toString(),
-        title: title,
-        updatedAt: DateTime.now());
+    final runtimeId = result['session_id'].toString();
+    final storedId = result['stored_session_id']?.toString();
+    final sessionId =
+        storedId == null || storedId.isEmpty ? runtimeId : storedId;
+    _runtimeSessionIds[sessionId] = runtimeId;
+    final session =
+        HermesSession(id: sessionId, title: title, updatedAt: DateTime.now());
+    _freshSessionIds.add(session.id);
+    return session;
   }
 
   Future<bool> deleteSession(String sessionId) async {
@@ -158,17 +288,60 @@ class HermesGatewayService {
     return res.statusCode == 200 || res.statusCode == 204;
   }
 
+  Future<void> renameSession(String sessionId, String title) async {
+    final normalizedTitle = title.trim();
+    if (normalizedTitle.isEmpty) {
+      throw ArgumentError('对话名称不能为空');
+    }
+    await _mutateStoredSession(sessionId, {'title': normalizedTitle});
+  }
+
+  Future<Map<String, dynamic>> _mutateStoredSession(
+      String sessionId, Map<String, dynamic> changes) async {
+    final path = '/api/sessions/${Uri.encodeComponent(sessionId)}';
+    final snapshotResponse = await _dio.get('$path/mutation-snapshot');
+    final snapshot = snapshotResponse.data;
+    if (snapshot is! Map || snapshot['exists'] != true) {
+      throw const FormatException('网关未返回会话修改凭据');
+    }
+    final revision = snapshot['runtime_revision'];
+    final generation = snapshot['runtime_generation'];
+    if (revision is! num || generation is! num) {
+      throw const FormatException('网关返回的会话修改凭据不完整');
+    }
+    final response = await _dio.patch(path, data: {
+      ...changes,
+      'request_id': const Uuid().v4(),
+      'expected_revision': revision.toInt(),
+      'expected_generation': generation.toInt(),
+    });
+    if (response.data is! Map) {
+      throw const FormatException('网关未确认会话修改结果');
+    }
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   Future<List<Map<String, dynamic>>> getSessionMessages(String sessionId,
       {int offset = 0}) async {
-    final res = await _dio.get(
-        '/api/sessions/${Uri.encodeComponent(sessionId)}/messages',
-        queryParameters: {
-          'limit': 100,
-          'offset': offset,
-          'order': 'latest',
-          'include_compacted': true,
-          'inline_images': false
-        });
+    Response<dynamic> res;
+    try {
+      res = await _dio.get(
+          '/api/sessions/${Uri.encodeComponent(sessionId)}/messages',
+          queryParameters: {
+            'limit': 100,
+            'offset': offset,
+            'order': 'latest',
+            'include_compacted': true,
+            'inline_images': false
+          });
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404 &&
+          offset == 0 &&
+          _freshSessionIds.contains(sessionId)) {
+        return <Map<String, dynamic>>[];
+      }
+      rethrow;
+    }
     final data = res.data;
     final dynamic messages = data is List
         ? data
@@ -191,6 +364,10 @@ class HermesGatewayService {
     final generation = _connectionGeneration;
     _jsonRpc = false;
     _rpcReady = Completer<void>();
+    _sessionReady = Completer<void>();
+    _resumingSessionId = currentSessionId;
+    _runtimeSessionIds.clear();
+    _sessionResumeError = null;
     _rpcMethods.clear();
 
     _updateStatus(ConnectionStatus.connecting);
@@ -272,6 +449,16 @@ class HermesGatewayService {
           if (frame['error'] != null) {
             pending.completeError(Exception(frame['error'].toString()));
           } else {
+            if (method == 'session.resume' && frame['result'] is Map) {
+              final result = Map<String, dynamic>.from(frame['result'] as Map);
+              _captureRuntimeSessionId(_resumingSessionId, result);
+              if (result['running'] == true && result['inflight'] is Map) {
+                _streamEventController.add({
+                  'type': 'resume_snapshot',
+                  'inflight': result['inflight']
+                });
+              }
+            }
             pending.complete(frame['result']);
           }
           return;
@@ -281,6 +468,7 @@ class HermesGatewayService {
               .add({'type': 'error', 'content': '$method: ${frame['error']}'});
         } else if (method == 'session.resume' && frame['result'] is Map) {
           final result = Map<String, dynamic>.from(frame['result'] as Map);
+          _captureRuntimeSessionId(_resumingSessionId, result);
           if (result['running'] == true && result['inflight'] is Map) {
             _streamEventController.add(
                 {'type': 'resume_snapshot', 'inflight': result['inflight']});
@@ -295,21 +483,40 @@ class HermesGatewayService {
         _jsonRpc = true;
         if (!(_rpcReady?.isCompleted ?? true)) _rpcReady!.complete();
         if (sessionId.isNotEmpty) {
-          _sendRpc('session.resume', {
-            'session_id': sessionId,
-            'omit_messages': true,
-            'inline_images': false
-          });
+          unawaited(_resumeForSubmit(sessionId, _connectionGeneration));
+        } else if (!(_sessionReady?.isCompleted ?? true)) {
+          _sessionReady!.complete();
         }
         return;
       }
-      if (event['session_id'] != null && event['session_id'] != sessionId) {
+      final expectedRuntimeId = _runtimeSessionIds[sessionId] ?? sessionId;
+      if (event['session_id'] != null &&
+          event['session_id'] != expectedRuntimeId &&
+          event['session_id'] != sessionId) {
         return;
       }
       final payload = event['payload'] is Map
           ? Map<String, dynamic>.from(event['payload'] as Map)
           : <String, dynamic>{};
       final mapped = <String, dynamic>{};
+      if (type is String && type.startsWith('approval.')) {
+        _streamEventController.add({
+          'type': type,
+          ...event,
+          if (event['payload'] is Map)
+            ...Map<String, dynamic>.from(event['payload'] as Map),
+        });
+        return;
+      }
+      if (type == 'voice.transcript') {
+        _streamEventController.add({
+          'type': type,
+          ...event,
+          if (event['payload'] is Map)
+            ...Map<String, dynamic>.from(event['payload'] as Map),
+        });
+        return;
+      }
       switch (type) {
         case 'message.start':
           mapped.addAll({'type': 'start'});
@@ -356,13 +563,65 @@ class HermesGatewayService {
     _streamEventController.add(frame);
   }
 
-  void sendMessage({required String sessionId, required String text}) {
+  Future<void> _resumeForSubmit(String sessionId, int generation) async {
+    try {
+      final result = await _requestRpc('session.resume', {
+        'session_id': sessionId,
+        'omit_messages': true,
+        'inline_images': false
+      });
+      _captureRuntimeSessionId(sessionId, result);
+      if (generation == _connectionGeneration &&
+          !(_sessionReady?.isCompleted ?? true)) {
+        _sessionReady!.complete();
+      }
+    } catch (error) {
+      if (generation == _connectionGeneration &&
+          !(_sessionReady?.isCompleted ?? true)) {
+        _sessionResumeError = error;
+        _sessionReady!.complete();
+      }
+    }
+  }
+
+  Future<void> sendMessage(
+      {required String sessionId, required String text}) async {
     if (_wsChannel == null || _connectionStatus != ConnectionStatus.connected) {
-      throw Exception("未连接到 Linux 服务器 Hermes 网关");
+      throw StateError('网关尚未连接，请连接恢复后重试');
+    }
+
+    // The socket can be open before the gateway announces which protocol it
+    // supports. Wait for that handshake before choosing JSON-RPC or legacy
+    // chat_message, otherwise the first send after connect can use the wrong
+    // wire format.
+    final generation = _connectionGeneration;
+    final rpcReady = _rpcReady;
+    try {
+      await rpcReady?.future.timeout(const Duration(seconds: 6));
+    } on TimeoutException {
+      // Older gateways do not emit gateway.ready and use the legacy protocol.
+    }
+    if (generation != _connectionGeneration ||
+        _wsChannel == null ||
+        _connectionStatus != ConnectionStatus.connected) {
+      throw StateError('网关连接已变化，请重新发送');
     }
 
     if (_jsonRpc) {
-      _sendRpc('prompt.submit', {'session_id': sessionId, 'text': text});
+      if (_resumingSessionId != sessionId) {
+        _resumingSessionId = sessionId;
+        _sessionReady = Completer<void>();
+        _sessionResumeError = null;
+        await _resumeForSubmit(sessionId, _connectionGeneration);
+      }
+      await _sessionReady?.future.timeout(const Duration(seconds: 18));
+      if (_sessionResumeError != null) {
+        throw StateError(_sessionResumeError.toString());
+      }
+      final runtimeId = _runtimeSessionIds[sessionId] ?? sessionId;
+      await _requestRpc(
+          'prompt.submit', {'session_id': runtimeId, 'text': text});
+      _freshSessionIds.remove(sessionId);
       return;
     }
     final payload = {
@@ -372,6 +631,7 @@ class HermesGatewayService {
       "timestamp": DateTime.now().millisecondsSinceEpoch,
     };
     _wsChannel!.sink.add(jsonEncode(payload));
+    _freshSessionIds.remove(sessionId);
   }
 
   void _scheduleReconnect(String currentSessionId) {

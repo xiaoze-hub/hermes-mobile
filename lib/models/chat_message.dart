@@ -34,6 +34,7 @@ class ChatMessage {
   final MessageRole role;
   String content;
   String thinking;
+  final List<String> attachments;
   List<ToolCallInfo> toolCalls;
   bool isStreaming;
   final DateTime createdAt;
@@ -43,17 +44,21 @@ class ChatMessage {
     required this.role,
     this.content = '',
     this.thinking = '',
+    List<String> attachments = const [],
     List<ToolCallInfo>? toolCalls,
     this.isStreaming = false,
     DateTime? createdAt,
-  })  : toolCalls = toolCalls ?? [],
+  })  : attachments = List.unmodifiable(attachments),
+        toolCalls = toolCalls ?? [],
         createdAt = createdAt ?? DateTime.now();
 
-  factory ChatMessage.user(String content) {
+  factory ChatMessage.user(String content,
+      {List<String> attachments = const []}) {
     return ChatMessage(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       role: MessageRole.user,
       content: content,
+      attachments: attachments,
     );
   }
 

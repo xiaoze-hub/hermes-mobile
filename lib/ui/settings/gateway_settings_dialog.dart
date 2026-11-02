@@ -53,7 +53,7 @@ class _GatewaySettingsDialogState extends State<GatewaySettingsDialog> {
       final sessions = await tempService.getSessions();
       setState(() {
         _testSuccess = true;
-        _testMessage = "连接成功！读取到 ${sessions.length} 个活跃会话。";
+        _testMessage = "通信正常！成功探测到 ${sessions.length} 个远端会话。";
       });
       tempService.dispose();
     } catch (e) {
@@ -62,7 +62,7 @@ class _GatewaySettingsDialogState extends State<GatewaySettingsDialog> {
         _testMessage = "连接失败: $e";
       });
     } finally {
-      setState(() => _testing = false);
+      if (mounted) setState(() => _testing = false);
     }
   }
 
@@ -88,11 +88,11 @@ class _GatewaySettingsDialogState extends State<GatewaySettingsDialog> {
     return Dialog(
       backgroundColor: HermesTheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: HermesTheme.border),
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: HermesTheme.borderSubtle, width: 1.2),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(20),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -100,71 +100,91 @@ class _GatewaySettingsDialogState extends State<GatewaySettingsDialog> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.hub, color: HermesTheme.primary, size: 20),
-                  const SizedBox(width: 8),
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: HermesTheme.primary.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.settings_ethernet_rounded, color: HermesTheme.primary, size: 18),
+                  ),
+                  const SizedBox(width: 10),
                   const Text(
-                    "远程网关配置",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                    "远程 Linux 网关中控配置",
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
                   ),
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18, color: HermesTheme.textMuted),
+                    icon: const Icon(Icons.close_rounded, size: 18, color: HermesTheme.textDim),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              const Text("Linux 服务器网关地址 (带端口 9119)", style: TextStyle(fontSize: 12, color: HermesTheme.textMuted)),
+              const SizedBox(height: 16),
+              const Text("Linux 服务器网关地址 (带端口 9119)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: HermesTheme.textMuted)),
               const SizedBox(height: 6),
               TextField(
                 controller: _urlController,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
                 decoration: const InputDecoration(
                   hintText: "http://192.168.1.100:9119 或 Tailscale IP",
                 ),
               ),
-              const SizedBox(height: 12),
-              const Text("网关认证 Token (可选/安全凭证)", style: TextStyle(fontSize: 12, color: HermesTheme.textMuted)),
+              const SizedBox(height: 14),
+              const Text("安全认证 Token (可选)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: HermesTheme.textMuted)),
               const SizedBox(height: 6),
               TextField(
                 controller: _tokenController,
                 obscureText: true,
                 style: const TextStyle(fontSize: 13),
                 decoration: const InputDecoration(
-                  hintText: "若启用了鉴权请输入 Token",
+                  hintText: "若服务器开启了 Token 鉴权请输入",
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               if (_testMessage != null) ...[
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: _testSuccess ? Colors.green.withOpacity(0.15) : Colors.red.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
+                    color: _testSuccess ? HermesTheme.accent.withOpacity(0.12) : HermesTheme.danger.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _testSuccess ? HermesTheme.accent.withOpacity(0.3) : HermesTheme.danger.withOpacity(0.3),
+                    ),
                   ),
                   child: Text(
                     _testMessage!,
                     style: TextStyle(
                       fontSize: 12,
-                      color: _testSuccess ? Colors.greenAccent : Colors.redAccent,
+                      color: _testSuccess ? HermesTheme.accent : const Color(0xFFFCA5A5),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
               ],
               Row(
                 children: [
-                  OutlinedButton(
+                  OutlinedButton.icon(
                     onPressed: _testing ? null : _testConnection,
-                    child: _testing
-                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5))
-                        : const Text("测试连接", style: TextStyle(fontSize: 12)),
+                    icon: _testing
+                        ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
+                        : const Icon(Icons.network_check_rounded, size: 15),
+                    label: const Text("探测连通性", style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: HermesTheme.textMuted,
+                      side: const BorderSide(color: HermesTheme.borderSubtle),
+                    ),
                   ),
                   const Spacer(),
                   FilledButton(
                     onPressed: _save,
-                    style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
-                    child: const Text("保存并重连", style: TextStyle(fontSize: 12)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: HermesTheme.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text("保存并重连", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                   ),
                 ],
               ),
