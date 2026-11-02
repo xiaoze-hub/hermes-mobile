@@ -39,4 +39,11 @@ class HermesStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyLastSessionId, sessionId);
   }
+
+  Future<String?> loadDraft(String sessionId) =>
+      _secureStorage.read(key: 'hermes_draft_$sessionId');
+
+  Future<void> saveDraft(String sessionId, String text) => text.isEmpty
+      ? _secureStorage.delete(key: 'hermes_draft_$sessionId')
+      : _secureStorage.write(key: 'hermes_draft_$sessionId', value: text);
 }

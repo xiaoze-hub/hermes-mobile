@@ -1,18 +1,38 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/theme.dart';
 
+class ChatPickedFile {
+  final String name;
+  final Uint8List bytes;
+  const ChatPickedFile({required this.name, required this.bytes});
+  String get extension =>
+      name.contains('.') ? name.split('.').last.toLowerCase() : '';
+}
+
 class ChatInputBar extends StatefulWidget {
-  final Function(String) onSend;
-  final VoidCallback? onStop;
+  final Future<bool> Function(String text, List<ChatPickedFile> attachments) onSend;
   final bool isConnected;
+  final bool draftReady;
   final bool isStreaming;
+  final VoidCallback? onStop;
+  final String draftText;
+  final List<ChatPickedFile> draftAttachments;
+  final ValueChanged<String>? onDraftTextChanged;
+  final ValueChanged<List<ChatPickedFile>>? onDraftAttachmentsChanged;
 
   const ChatInputBar({
     super.key,
     required this.onSend,
-    this.onStop,
     required this.isConnected,
+    this.draftReady = true,
     this.isStreaming = false,
+    this.onStop,
+    this.draftText = '',
+    this.draftAttachments = const [],
+    this.onDraftTextChanged,
+    this.onDraftAttachmentsChanged,
   });
 
   @override
@@ -20,39 +40,181 @@ class ChatInputBar extends StatefulWidget {
 }
 
 class _ChatInputBarState extends State<ChatInputBar> {
-  final TextEditingController _controller = TextEditingController();
-  bool _hasText = false;
+  late final TextEditingController _controller;
+  late final List<ChatPickedFile> _attachments;
+  bool _listening = false;
+  bool _uploading = false;
+  bool _sending = false;
 
-  // 预置 Linux / Hermes Agent 常用中控快捷指令
+  // Linux 常用运维指令宏
   final List<Map<String, String>> _quickMacros = [
     {'label': '🐳 容器状态', 'cmd': '请检查服务器当前 Docker 容器状态，标出任何异常退出的容器。'},
     {'label': '📊 内存占用', 'cmd': '执行 free -h 和 vmstat，分析当前 Linux 内存是否充裕。'},
     {'label': '🔥 CPU 负载', 'cmd': '执行 top -b -n 1 并排查消耗 CPU 最多的前 5 个进程。'},
     {'label': '💾 磁盘空间', 'cmd': '执行 df -h 查看根分区和挂载点的剩余磁盘空间。'},
-    {'label': '📜 系统错误日志', 'cmd': '排查 journalctl -p err -n 10 最近的系统错误记录。'},
+    {'label': '📜 错误日志', 'cmd': '排查 journalctl -p err -n 10 最近的系统错误记录。'},
   ];
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(() {
-      final has = _controller.text.trim().isNotEmpty;
-      if (has != _hasText) {
-        setState(() => _hasText = has);
-      }
-    });
+    _controller = TextEditingController(text: widget.draftText);
+    _attachments = List.of(widget.draftAttachments);
   }
 
-  void _handleSend() {
+  @override
+  void didUpdateWidget(covariant ChatInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.draftText != widget.draftText && _controller.text != widget.draftText) {
+      _controller.text = widget.draftText;
+    }
+    if (oldWidget.draftAttachments != widget.draftAttachments) {
+      _attachments.clear();
+      _attachments.addAll(widget.draftAttachments);
+    }
+  }
+
+  Future<void> _pickFiles() async {
+    if (_uploading || _sending) return;
+    if (mounted) setState(() => _uploading = true);
+    try {
+      final result = await const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<List<dynamic>>('pickFiles');
+      if (result == null || result.isEmpty || !mounted) return;
+      final files = result
+          .whereType<Map>()
+          .map((file) => ChatPickedFile(
+                name: file['name']?.toString() ?? 'attachment',
+                bytes: file['bytes'] as Uint8List,
+              ))
+          .toList();
+      const maxFiles = 5;
+      const maxFileBytes = 15 * 1024 * 1024;
+      const maxTotalBytes = 30 * 1024 * 1024;
+      final picked = <ChatPickedFile>[];
+      var totalBytes = _attachments.fold<int>(0, (total, file) => total + file.bytes.length);
+      for (final file in files) {
+        if (_attachments.length + picked.length >= maxFiles) break;
+        if (file.bytes.length > maxFileBytes || totalBytes + file.bytes.length > maxTotalBytes) {
+          continue;
+        }
+        picked.add(file);
+        totalBytes += file.bytes.length;
+      }
+      if (!mounted) return;
+      setState(() {
+        _attachments.addAll(picked);
+        _uploading = false;
+      });
+      widget.onDraftAttachmentsChanged?.call(List.unmodifiable(_attachments));
+      if (picked.length < files.length) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('最多添加 5 个文件，单个不超过 15 MB，总计不超过 30 MB'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('附件处理失败：$error'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _toggleVoice() async {
+    if (_listening) return;
+    try {
+      if (mounted) setState(() => _listening = true);
+      final transcript = await const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<String>('recognizeSpeech');
+      if (transcript != null && transcript.isNotEmpty) {
+        _controller.value = TextEditingValue(
+          text: _controller.text.isEmpty ? transcript : '${_controller.text} $transcript',
+          selection: TextSelection.collapsed(
+            offset: (_controller.text.isEmpty ? transcript : '${_controller.text} $transcript').length,
+          ),
+        );
+        widget.onDraftTextChanged?.call(_controller.text);
+      }
+    } on PlatformException catch (error) {
+      if (mounted) {
+        final permissionDenied = error.code == 'speech_service_permission_denied';
+        final message = switch (error.code) {
+          'microphone_permission_denied' => '请允许 Hermes 使用麦克风后再试',
+          'speech_service_permission_denied' => '系统语音服务没有麦克风权限，请在设置中为语音识别服务授权',
+          'speech_network_error' => '语音服务连接失败，请检查网络或系统语音服务',
+          'speech_no_match' => '没有听清内容，请靠近麦克风再试一次',
+          'recognizer_unavailable' => '此设备没有可用的系统语音识别服务',
+          _ => error.message ?? '语音输入暂时不可用，请检查系统语音服务设置',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          action: permissionDenied
+              ? SnackBarAction(
+                  label: '设置',
+                  onPressed: () {
+                    const MethodChannel('com.hermes.mobile/files')
+                        .invokeMethod<void>('openSpeechServiceSettings', {
+                      'packageName': error.details?.toString(),
+                    });
+                  },
+                )
+              : null,
+        ));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法启动语音输入，请检查系统语音服务'), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _listening = false);
+    }
+  }
+
+  Future<void> _handleSend() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || !widget.isConnected || widget.isStreaming) return;
-    widget.onSend(text);
-    _controller.clear();
+    if ((text.isEmpty && _attachments.isEmpty) || !widget.isConnected || _sending) return;
+    setState(() => _sending = true);
+    try {
+      final sent = await widget.onSend(text, List.unmodifiable(_attachments));
+      if (!mounted) return;
+      if (!sent) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('消息未确认发送，草稿已保留。重试前请先检查网络'),
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
+      }
+      _controller.clear();
+      setState(() => _attachments.clear());
+      widget.onDraftTextChanged?.call('');
+      widget.onDraftAttachmentsChanged?.call(const []);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('发送失败，草稿已保留：$error'),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   void _applyMacro(String cmd) {
     _controller.text = cmd;
     _controller.selection = TextSelection.fromPosition(TextPosition(offset: cmd.length));
+    widget.onDraftTextChanged?.call(cmd);
+    setState(() {});
   }
 
   @override
@@ -63,15 +225,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   @override
   Widget build(BuildContext context) {
+    final hasContent = _controller.text.trim().isNotEmpty || _attachments.isNotEmpty;
+
     return Container(
       decoration: BoxDecoration(
-        // 上方柔和渐隐阴影
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
             HermesTheme.background.withOpacity(0.0),
-            HermesTheme.background.withOpacity(0.85),
+            HermesTheme.background.withOpacity(0.9),
             HermesTheme.background,
           ],
           stops: const [0.0, 0.35, 1.0],
@@ -88,9 +251,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 1. 横向快捷宏指令栏 (Quick Telemetry Chips)
+            // 1. 横向快捷运维宏指令栏 (Quick Macros)
             SizedBox(
-              height: 32,
+              height: 30,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _quickMacros.length,
@@ -103,29 +266,89 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     backgroundColor: HermesTheme.surfaceLight,
                     side: const BorderSide(color: HermesTheme.borderSubtle, width: 0.8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     label: Text(
                       macro['label']!,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: HermesTheme.textMuted,
-                        letterSpacing: 0.1,
-                      ),
+                      style: const TextStyle(fontSize: 10.5, color: HermesTheme.textMuted),
                     ),
                     onPressed: widget.isConnected ? () => _applyMacro(macro['cmd']!) : null,
                   );
                 },
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
-            // 2. 核心悬浮输入胶囊 (Floating Command Capsule)
+            // 2. 附件缩略图预览栏 (Attachments Strip)
+            if (_attachments.isNotEmpty)
+              Container(
+                height: 48,
+                margin: const EdgeInsets.only(bottom: 6),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _attachments.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final file = _attachments[index];
+                    final isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'].contains(file.extension);
+
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: HermesTheme.surfaceLight,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: HermesTheme.borderSubtle),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isImage)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: Image.memory(
+                                file.bytes,
+                                width: 28,
+                                height: 28,
+                                fit: BoxFit.cover,
+                              ),
+                            )
+                          else
+                            Icon(
+                              file.extension == 'pdf' ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_rounded,
+                              size: 18,
+                              color: HermesTheme.cyan,
+                            ),
+                          const SizedBox(width: 6),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 110),
+                            child: Text(
+                              file.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11, color: HermesTheme.textMain),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          InkWell(
+                            onTap: _sending ? null : () {
+                              setState(() => _attachments.removeAt(index));
+                              widget.onDraftAttachmentsChanged?.call(List.unmodifiable(_attachments));
+                            },
+                            child: const Icon(Icons.close_rounded, size: 14, color: HermesTheme.textDim),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            // 3. 核心悬浮输入岛 (Floating Command Dock)
             Container(
               decoration: BoxDecoration(
                 color: HermesTheme.surfaceGlass,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: _hasText ? HermesTheme.primary.withOpacity(0.6) : HermesTheme.borderSubtle,
+                  color: hasContent ? HermesTheme.primary.withOpacity(0.6) : HermesTheme.borderSubtle,
                   width: 1.2,
                 ),
                 boxShadow: const [
@@ -139,13 +362,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // 左侧辅助图标 (特工斜杠命令快捷键提示)
+                  // 左侧添加附件按钮 (+)
                   Padding(
-                    padding: const EdgeInsets.only(left: 12, bottom: 10),
-                    child: Icon(
-                      Icons.terminal_rounded,
-                      size: 18,
-                      color: widget.isConnected ? HermesTheme.cyan : HermesTheme.textDim,
+                    padding: const EdgeInsets.only(left: 6, bottom: 5),
+                    child: IconButton(
+                      tooltip: '添加图片或文件',
+                      onPressed: widget.isConnected && !_uploading && !_sending ? _pickFiles : null,
+                      icon: _uploading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.cyan),
+                            )
+                          : const Icon(Icons.add_circle_outline_rounded, size: 20, color: HermesTheme.cyan),
                     ),
                   ),
 
@@ -153,14 +382,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   Expanded(
                     child: TextField(
                       controller: _controller,
+                      enabled: !_sending && widget.draftReady,
                       maxLines: 5,
                       minLines: 1,
                       keyboardType: TextInputType.multiline,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        color: HermesTheme.textMain,
-                        height: 1.45,
-                      ),
+                      style: const TextStyle(fontSize: 13.5, color: HermesTheme.textMain, height: 1.45),
                       decoration: InputDecoration(
                         filled: false,
                         hintText: widget.isConnected
@@ -170,9 +396,27 @@ class _ChatInputBarState extends State<ChatInputBar> {
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 11),
                       ),
                       onSubmitted: (_) => _handleSend(),
+                      onChanged: (val) {
+                        setState(() {});
+                        widget.onDraftTextChanged?.call(val);
+                      },
+                    ),
+                  ),
+
+                  // 语音听写按钮 (Mic)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: IconButton(
+                      tooltip: _listening ? '正在听写...' : '语音听写输入',
+                      onPressed: widget.isConnected && !_listening && !_sending ? _toggleVoice : null,
+                      icon: Icon(
+                        _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                        size: 20,
+                        color: _listening ? HermesTheme.warning : HermesTheme.textMuted,
+                      ),
                     ),
                   ),
 
@@ -197,8 +441,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
                             )
                           : IconButton.filled(
                               key: const ValueKey('send_btn'),
-                              onPressed: (widget.isConnected && _hasText) ? _handleSend : null,
-                              icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                              onPressed: (widget.isConnected && !_sending && hasContent) ? _handleSend : null,
+                              icon: _sending
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.arrow_upward_rounded, size: 18),
                               tooltip: '发送指令',
                               style: IconButton.styleFrom(
                                 backgroundColor: HermesTheme.primary,

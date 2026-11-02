@@ -1,7 +1,7 @@
 name: hermes_mobile
 description: "Cross-platform mobile client for Hermes Agent on Linux"
 publish_to: 'none'
-version: 1.2.0+5
+version: 1.2.1+6
 
 environment:
   sdk: '>=3.2.0 <4.0.0'

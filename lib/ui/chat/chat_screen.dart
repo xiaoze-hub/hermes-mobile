@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -9,6 +10,8 @@ import '../../models/chat_message.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
 import '../sessions/session_drawer.dart';
+import '../settings/agent_workspace_screen.dart';
+import '../settings/gateway_management_screen.dart';
 import '../settings/gateway_settings_dialog.dart';
 import '../settings/app_update_screen.dart';
 import 'chat_input_bar.dart';
@@ -33,12 +36,26 @@ class _ChatScreenState extends State<ChatScreen> {
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _loadingHistory = false;
   String? _loadHistoryError;
+  bool _loadingOlder = false;
+  bool _hasOlder = false;
+  bool _followLatest = true;
+
+  String _currentModel = '';
+  final List<Map<String, dynamic>> _approvals = [];
+  final Set<String> _receivedApprovalIds = {};
+
+  final Set<String> _loadedDrafts = {};
+  final Map<String, String> _drafts = {};
+  final Map<String, List<ChatPickedFile>> _draftAttachments = {};
+  final Map<String, Future<void>> _draftWrites = {};
 
   StreamSubscription? _statusSub;
   StreamSubscription? _streamSub;
 
   bool get _isCurrentlyStreaming {
-    return _messages.isNotEmpty && _messages.last.role == MessageRole.assistant && _messages.last.isStreaming;
+    return _messages.isNotEmpty &&
+        _messages.last.role == MessageRole.assistant &&
+        _messages.last.isStreaming;
   }
 
   @override
@@ -55,8 +72,262 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamSub = widget.gatewayService.streamEvents.listen(_handleStreamEvent);
 
     _loadOrRestoreSession();
+    _loadCurrentModel();
   }
 
+  @override
+  void dispose() {
+    _statusSub?.cancel();
+    _streamSub?.cancel();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // ==========================================
+  // 模型与节点切换
+  // ==========================================
+  Future<void> _loadCurrentModel() async {
+    try {
+      final info = await widget.gatewayService.getModelInfo();
+      if (!mounted) return;
+      setState(() {
+        _currentModel = [
+          info['provider']?.toString(),
+          info['model']?.toString(),
+        ].where((part) => part != null && part.isNotEmpty).join('/');
+      });
+    } catch (_) {
+      // Model info is optional
+    }
+  }
+
+  Future<void> _showModelPicker() async {
+    try {
+      final result = await widget.gatewayService.getModelOptions();
+      final providers = result['providers'];
+      final options = <Map<String, String>>[];
+      final providerLabels = <String, String>{};
+
+      if (providers is List) {
+        for (final rawProvider in providers.whereType<Map>()) {
+          final provider = (rawProvider['slug'] ??
+                  rawProvider['id'] ??
+                  rawProvider['name'] ??
+                  '')
+              .toString();
+          final providerLabel = (rawProvider['display_name'] ??
+                  rawProvider['label'] ??
+                  rawProvider['name'] ??
+                  provider)
+              .toString();
+          if (provider.isNotEmpty) providerLabels[provider] = providerLabel;
+          final models = rawProvider['models'];
+          if (models is! List) continue;
+          for (final model in models) {
+            final id = model is Map
+                ? (model['id'] ?? model['model'] ?? model['name']).toString()
+                : model.toString();
+            final label = model is Map
+                ? (model['name'] ?? model['id'] ?? model['model']).toString()
+                : id;
+            if (provider.isNotEmpty && id.isNotEmpty) {
+              options.add({
+                'provider': provider,
+                'providerLabel': providerLabel,
+                'id': id,
+                'label': label,
+              });
+            }
+          }
+        }
+      }
+
+      if (!mounted) return;
+      if (options.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('网关暂未返回可用模型列表')),
+        );
+        return;
+      }
+
+      final searchController = TextEditingController();
+      final selected = await showModalBottomSheet<Map<String, String>>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: HermesTheme.surfaceElevated,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final query = searchController.text.trim().toLowerCase();
+            final groups = <String, List<Map<String, String>>>{};
+            for (final opt in options) {
+              final matches = query.isEmpty ||
+                  [opt['provider'], opt['providerLabel'], opt['id'], opt['label']]
+                      .any((v) => v!.toLowerCase().contains(query));
+              if (matches) {
+                groups.putIfAbsent(opt['provider']!, () => []).add(opt);
+              }
+            }
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(sheetContext).size.height * 0.78,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 10),
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: HermesTheme.border,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.auto_awesome_rounded, size: 20, color: HermesTheme.accent),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '切换执行模型',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${groups.values.fold<int>(0, (sum, m) => sum + m.length)} 个可用',
+                            style: const TextStyle(fontSize: 12, color: HermesTheme.textDim),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                      child: TextField(
+                        controller: searchController,
+                        onChanged: (_) => setSheetState(() {}),
+                        decoration: InputDecoration(
+                          hintText: '搜索模型名称或厂商 (如 claude, gpt, deepseek)...',
+                          prefixIcon: const Icon(Icons.search_rounded, size: 18, color: HermesTheme.textDim),
+                          suffixIcon: searchController.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close_rounded, size: 16),
+                                  onPressed: () {
+                                    searchController.clear();
+                                    setSheetState(() {});
+                                  },
+                                ),
+                          filled: true,
+                          fillColor: HermesTheme.surfaceLight,
+                        ),
+                        style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                      ),
+                    ),
+                    Expanded(
+                      child: groups.isEmpty
+                          ? const Center(
+                              child: Text('无匹配模型', style: TextStyle(color: HermesTheme.textDim)),
+                            )
+                          : ListView(
+                              padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+                              children: groups.entries.map((entry) {
+                                final label = providerLabels[entry.key] ?? entry.key;
+                                final currentProvider = _currentModel.split('/').first;
+
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    color: HermesTheme.surface,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: HermesTheme.borderSubtle),
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: ExpansionTile(
+                                    key: PageStorageKey('provider-${entry.key}'),
+                                    initiallyExpanded: query.isNotEmpty || currentProvider == entry.key,
+                                    leading: CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: HermesTheme.surfaceLight,
+                                      child: Text(
+                                        label.isNotEmpty ? label[0].toUpperCase() : 'M',
+                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: HermesTheme.accent),
+                                      ),
+                                    ),
+                                    title: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                                    subtitle: Text('${entry.value.length} 个模型 · ${entry.key}', style: const TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                                    children: entry.value.map((opt) {
+                                      final isCurrent = '${opt['provider']}/${opt['id']}' == _currentModel;
+                                      return ListTile(
+                                        dense: true,
+                                        contentPadding: const EdgeInsets.only(left: 48, right: 14),
+                                        leading: Icon(
+                                          isCurrent ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                                          size: 16,
+                                          color: isCurrent ? HermesTheme.accent : HermesTheme.textDim,
+                                        ),
+                                        title: Text(
+                                          opt['label']!,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                            color: isCurrent ? HermesTheme.accent : HermesTheme.textMain,
+                                          ),
+                                        ),
+                                        subtitle: opt['label'] == opt['id']
+                                            ? null
+                                            : Text(opt['id']!, style: const TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                                        trailing: isCurrent
+                                            ? Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: HermesTheme.accent.withOpacity(0.15),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: const Text('当前使用', style: TextStyle(fontSize: 10, color: HermesTheme.accent)),
+                                              )
+                                            : null,
+                                        onTap: () => Navigator.pop(sheetContext, opt),
+                                      );
+                                    }).toList(),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+      searchController.dispose();
+      if (selected == null || !mounted) return;
+
+      await widget.gatewayService.setModel(provider: selected['provider']!, model: selected['id']!);
+      await _loadCurrentModel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已切换执行模型为: ${selected['label']}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('模型切换失败: $e')));
+      }
+    }
+  }
+
+  // ==========================================
+  // 会话与草稿管理
+  // ==========================================
   Future<void> _loadOrRestoreSession() async {
     try {
       final sessions = await widget.gatewayService.getSessions();
@@ -76,22 +347,67 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _activeSession = session;
       _messages.clear();
+      _approvals.clear();
       _loadHistoryError = null;
+      _hasOlder = false;
+      _followLatest = true;
     });
+
     _storage.saveLastSessionId(session.id);
     widget.gatewayService.connectWebSocket(session.id);
     _loadSessionHistory(session.id);
+
+    // 加载会话草稿
+    if (!_loadedDrafts.contains(session.id)) {
+      _storage.loadDraft(session.id).then((draft) {
+        if (mounted && _activeSession?.id == session.id) {
+          setState(() {
+            _loadedDrafts.add(session.id);
+            if (draft != null && draft.isNotEmpty) {
+              _drafts[session.id] = draft;
+            }
+          });
+        }
+      });
+    }
   }
 
+  void _onSessionRenamed(HermesSession renamed) {
+    if (_activeSession?.id == renamed.id) {
+      setState(() {
+        _activeSession = renamed;
+      });
+    }
+  }
+
+  Future<void> _createNewSession() async {
+    try {
+      final newSession = await widget.gatewayService.createSession(title: '新任务指令');
+      _switchSession(newSession);
+    } catch (e) {
+      final fallback = HermesSession(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: '新任务指令',
+        updatedAt: DateTime.now(),
+      );
+      _switchSession(fallback);
+    }
+  }
+
+  // ==========================================
+  // 历史消息与翻页
+  // ==========================================
   Future<void> _loadSessionHistory(String sessionId) async {
     setState(() {
       _loadingHistory = true;
       _loadHistoryError = null;
     });
 
+    _loadPendingApprovals();
+
     try {
-      final rawMessages = await widget.gatewayService.getSessionMessages(sessionId);
-      if (!mounted) return;
+      final rawMessages = await widget.gatewayService.getSessionMessages(sessionId, limit: 30);
+      if (!mounted || _activeSession?.id != sessionId) return;
 
       final List<ChatMessage> parsedList = [];
       for (final m in rawMessages) {
@@ -123,9 +439,10 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.clear();
         _messages.addAll(parsedList);
         _loadingHistory = false;
+        _hasOlder = rawMessages.length >= 30;
       });
 
-      _scrollToBottom();
+      _scrollToBottom(force: true);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -136,23 +453,98 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _createNewSession() async {
+  Future<void> _loadOlder() async {
+    final session = _activeSession;
+    if (session == null || _loadingOlder || !_hasOlder || _messages.isEmpty) return;
+
+    setState(() => _loadingOlder = true);
     try {
-      final newSession = await widget.gatewayService.createSession(title: '新任务指令');
-      _switchSession(newSession);
-    } catch (e) {
-      final fallback = HermesSession(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: '新任务指令',
-        updatedAt: DateTime.now(),
+      final oldestId = _messages.first.id;
+      final rawMessages = await widget.gatewayService.getSessionMessages(
+        session.id,
+        beforeId: oldestId,
+        limit: 30,
       );
-      _switchSession(fallback);
+
+      if (!mounted || _activeSession?.id != session.id) return;
+
+      final List<ChatMessage> older = [];
+      for (final m in rawMessages) {
+        final msg = ChatMessage.fromRawMap(m);
+        if (msg.role == MessageRole.system && msg.content.trim().isEmpty) continue;
+        older.add(msg);
+      }
+
+      setState(() {
+        _messages.insertAll(0, older);
+        _hasOlder = rawMessages.length >= 30;
+        _loadingOlder = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
+  }
+
+  // ==========================================
+  // 特工指令流式与权限审批
+  // ==========================================
+  Future<void> _loadPendingApprovals() async {
+    final id = _activeSession?.id;
+    if (id == null || !widget.gatewayService.supportsJsonRpc) return;
+    try {
+      final items = await widget.gatewayService.getPendingApprovals(id);
+      if (mounted && _activeSession?.id == id) {
+        setState(() {
+          _approvals.clear();
+          _approvals.addAll(items);
+        });
+        for (final item in items) {
+          final requestId = item['request_id']?.toString() ?? '';
+          if (requestId.isNotEmpty && _receivedApprovalIds.add(requestId)) {
+            widget.gatewayService.callRpc('approval.received', {
+              'session_id': id,
+              'request_id': requestId,
+            }).catchError((_) {});
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _respondApproval(Map<String, dynamic> approval, String choice) async {
+    final sessionId = _activeSession?.id;
+    if (sessionId == null) return;
+    try {
+      await widget.gatewayService.respondApproval(
+        sessionId,
+        approval['request_id']?.toString() ?? '',
+        choice,
+      );
+      if (mounted) {
+        setState(() => _approvals.remove(approval));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('审批提交失败: $e')));
+      }
     }
   }
 
   void _handleStreamEvent(Map<String, dynamic> event) {
     final type = event['type']?.toString();
     if (!mounted) return;
+
+    // 处理安全审批流式通知
+    if (type == 'approval.requested') {
+      _loadPendingApprovals();
+      return;
+    } else if (type == 'approval.resolved') {
+      final reqId = event['request_id']?.toString();
+      if (reqId != null) {
+        setState(() => _approvals.removeWhere((a) => a['request_id']?.toString() == reqId));
+      }
+      return;
+    }
 
     setState(() {
       ChatMessage? currentAssistant;
@@ -194,37 +586,144 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  void _sendMessage(String text) {
-    if (_activeSession == null) return;
+  // ==========================================
+  // 发送指令、附件上传与终止
+  // ==========================================
+  Future<List<String>> _uploadAttachments(String sessionId, List<ChatPickedFile> files) async {
+    final refs = <String>[];
+    for (final file in files) {
+      final bytes = file.bytes;
+      if (bytes.length > 15 * 1024 * 1024) {
+        throw StateError('${file.name} 超过 15 MB 上传限制');
+      }
+      final encoded = base64Encode(bytes);
+      final ext = file.extension;
+
+      if (ext == 'pdf') {
+        final result = await widget.gatewayService.attachPdf(
+          sessionId: sessionId,
+          name: file.name,
+          base64: encoded,
+        );
+        if (result is Map && result['ref_text'] != null) {
+          refs.add(result['ref_text'].toString());
+        }
+      } else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'].contains(ext)) {
+        final result = await widget.gatewayService.attachImage(
+          sessionId: sessionId,
+          name: file.name,
+          base64: encoded,
+        );
+        if (result is Map && result['ref_text'] != null) {
+          refs.add(result['ref_text'].toString());
+        }
+      } else {
+        final mime = ext == 'txt' ? 'text/plain' : 'application/octet-stream';
+        final result = await widget.gatewayService.attachFile(
+          sessionId: sessionId,
+          name: file.name,
+          dataUrl: 'data:$mime;base64,$encoded',
+        );
+        if (result is Map && result['ref_text'] != null) {
+          refs.add(result['ref_text'].toString());
+        }
+      }
+    }
+    return refs;
+  }
+
+  Future<bool> _sendMessageWithAttachments(String text, List<ChatPickedFile> attachments) async {
+    final session = _activeSession;
+    if (session == null) return false;
+
+    List<String> refs = [];
+    if (attachments.isNotEmpty) {
+      try {
+        refs = await _uploadAttachments(session.id, attachments);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('附件上传失败: $e')));
+        }
+        return false;
+      }
+    }
+
+    if (!mounted || _activeSession?.id != session.id) return false;
+
+    final names = attachments.map((f) => f.name).toList();
+    final visibleText = text.trim().isEmpty && names.isNotEmpty ? '请查看并分析这些附件。' : text;
+    final outgoingText = [
+      visibleText,
+      if (names.isNotEmpty) '附件: ${names.join('、')}',
+      ...refs,
+    ].where((part) => part.trim().isNotEmpty).join('\n\n');
+
+    final alreadyRunning = _messages.any((m) => m.isStreaming);
+    final placeholder = alreadyRunning ? null : ChatMessage.assistant(isStreaming: true);
 
     setState(() {
-      _messages.add(ChatMessage.user(text));
-      _messages.add(ChatMessage.assistant(isStreaming: true));
+      _messages.add(ChatMessage.user(visibleText, attachments: names));
+      if (placeholder != null) _messages.add(placeholder);
     });
 
     try {
-      widget.gatewayService.sendMessage(sessionId: _activeSession!.id, text: text);
+      await widget.gatewayService.sendMessage(sessionId: session.id, text: outgoingText);
     } catch (e) {
+      if (!mounted || _activeSession?.id != session.id) return false;
       setState(() {
-        if (_messages.isNotEmpty) {
-          _messages.last.content = '下发指令失败: $e';
-          _messages.last.isStreaming = false;
+        if (placeholder != null) {
+          placeholder.content = '下发指令失败: $e';
+          placeholder.isStreaming = false;
+        } else {
+          _messages.add(ChatMessage.assistant(isStreaming: false)..content = '下发指令失败: $e');
         }
       });
+      return false;
     }
 
-    _scrollToBottom();
+    _scrollToBottom(force: true);
+    return true;
   }
 
-  void _stopGeneration() {
-    setState(() {
-      if (_messages.isNotEmpty && _messages.last.role == MessageRole.assistant) {
-        _messages.last.isStreaming = false;
+  Future<void> _stopGeneration() async {
+    final sessionId = _activeSession?.id;
+    if (sessionId == null) return;
+    try {
+      await widget.gatewayService.interruptSession(sessionId);
+      if (mounted) {
+        setState(() {
+          for (final msg in _messages.where((m) => m.isStreaming)) {
+            msg.isStreaming = false;
+          }
+        });
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('终止任务失败: $e')));
+      }
+    }
   }
 
-  void _scrollToBottom() {
+  Future<void> _regenerateLastReply() async {
+    if (_messages.isEmpty || _isCurrentlyStreaming) return;
+    final lastAssistantIdx = _messages.lastIndexWhere((m) => m.role == MessageRole.assistant);
+    if (lastAssistantIdx == -1) return;
+
+    final lastUserIdx = _messages.lastIndexWhere((m) => m.role == MessageRole.user, lastAssistantIdx);
+    if (lastUserIdx == -1) return;
+
+    final lastUserMsg = _messages[lastUserIdx];
+    setState(() {
+      _messages.removeRange(lastAssistantIdx, _messages.length);
+    });
+
+    await _sendMessageWithAttachments(lastUserMsg.content, const []);
+  }
+
+  void _scrollToBottom({bool force = false}) {
+    if (!force && !_followLatest) return;
+    if (force && !_followLatest) setState(() => _followLatest = true);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -247,6 +746,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ==========================================
+  // UI 构件
+  // ==========================================
   Widget _buildTelemetryBadge() {
     Color dotColor;
     String statusText;
@@ -254,12 +756,12 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (_connectionStatus) {
       case ConnectionStatus.connected:
         dotColor = HermesTheme.accent;
-        statusText = "Hermes Agent · 连通在线";
+        statusText = "Hermes · 连通在线";
         break;
       case ConnectionStatus.connecting:
       case ConnectionStatus.reconnecting:
         dotColor = HermesTheme.warning;
-        statusText = "中控重连中...";
+        statusText = "网关重连中...";
         break;
       case ConnectionStatus.disconnected:
       case ConnectionStatus.error:
@@ -270,10 +772,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
       decoration: BoxDecoration(
         color: HermesTheme.surfaceLight,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: HermesTheme.borderSubtle, width: 0.8),
       ),
       child: Row(
@@ -293,19 +795,124 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 5),
           Text(
             statusText,
-            style: const TextStyle(fontSize: 10.5, color: HermesTheme.textMuted, letterSpacing: 0.2),
+            style: const TextStyle(fontSize: 10, color: HermesTheme.textMuted, letterSpacing: 0.2),
           ),
         ],
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _statusSub?.cancel();
-    _streamSub?.cancel();
-    _scrollController.dispose();
-    super.dispose();
+  Widget _buildApprovalCard(Map<String, dynamic> approval) {
+    final requestId = approval['request_id']?.toString() ?? '';
+    final command = approval['command']?.toString() ??
+        approval['description']?.toString() ??
+        'Hermes 正在请求执行高权限操作';
+    final choices = approval['choices'] is List
+        ? List<String>.from(approval['choices'])
+        : const ['once', 'deny'];
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: HermesTheme.surfaceElevated,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: HermesTheme.warning.withOpacity(0.5), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: HermesTheme.warning.withOpacity(0.08),
+            blurRadius: 10,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.shield_outlined, color: HermesTheme.warning, size: 18),
+              SizedBox(width: 8),
+              Text(
+                '特工操作权限授权确认',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: HermesTheme.textMain),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: HermesTheme.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: HermesTheme.borderSubtle),
+            ),
+            child: SelectableText(
+              command,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                color: HermesTheme.textMain,
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (choices.contains('once'))
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: HermesTheme.accent.withOpacity(0.15),
+                    foregroundColor: HermesTheme.accent,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () => _respondApproval(approval, 'once'),
+                  child: const Text('仅本次允许', style: TextStyle(fontSize: 12)),
+                ),
+              if (choices.contains('session'))
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: HermesTheme.primary.withOpacity(0.2),
+                    foregroundColor: HermesTheme.primaryLight,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () => _respondApproval(approval, 'session'),
+                  child: const Text('本会话允许', style: TextStyle(fontSize: 12)),
+                ),
+              if (choices.contains('always') && approval['allow_permanent'] == true)
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () => _respondApproval(approval, 'always'),
+                  child: const Text('始终允许', style: TextStyle(fontSize: 12)),
+                ),
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: HermesTheme.danger,
+                  side: const BorderSide(color: HermesTheme.danger, width: 0.8),
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: () => _respondApproval(approval, 'deny'),
+                child: const Text('拒绝执行', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          if (requestId.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '请求 ID: ${requestId.length > 12 ? requestId.substring(0, 12) : requestId}',
+                style: const TextStyle(color: HermesTheme.textDim, fontSize: 10),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -323,30 +930,61 @@ class _ChatScreenState extends State<ChatScreen> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             _buildTelemetryBadge(),
           ],
         ),
         actions: [
-          IconButton(
-            icon: _loadingHistory
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.primary),
-                  )
-                : const Icon(Icons.sync_rounded, size: 20),
-            tooltip: "重新同步当前会话记录",
-            onPressed: _loadingHistory || _activeSession == null
-                ? null
-                : () => _loadSessionHistory(_activeSession!.id),
+          // 模型快速切换 Pill
+          TextButton.icon(
+            onPressed: _showModelPicker,
+            icon: const Icon(Icons.auto_awesome_rounded, size: 15, color: HermesTheme.accent),
+            label: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 82),
+              child: Text(
+                _currentModel.isEmpty ? '模型' : _currentModel.split('/').last,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: HermesTheme.textMain),
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              backgroundColor: HermesTheme.surfaceLight,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
           ),
+          const SizedBox(width: 4),
+
+          // 新建会话按钮
+          IconButton(
+            icon: const Icon(Icons.edit_square, size: 19, color: HermesTheme.textMain),
+            tooltip: "新建对话",
+            onPressed: _createNewSession,
+          ),
+
+          // 更多控制中枢菜单
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, size: 20),
+            icon: const Icon(Icons.more_vert_rounded, size: 20, color: HermesTheme.textMain),
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'settings') {
+              if (val == 'workspace') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => AgentWorkspaceScreen(
+                      gateway: widget.gatewayService,
+                      sessionId: _activeSession?.id ?? '',
+                    ),
+                  ),
+                );
+              } else if (val == 'gateway') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => GatewayManagementScreen(gateway: widget.gatewayService),
+                  ),
+                );
+              } else if (val == 'settings') {
                 showDialog(
                   context: context,
                   builder: (ctx) => GatewaySettingsDialog(
@@ -365,8 +1003,30 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'workspace',
+                height: 40,
+                child: Row(
+                  children: [
+                    Icon(Icons.terminal_rounded, size: 16, color: HermesTheme.accent),
+                    SizedBox(width: 10),
+                    Text('Agent 特工工作台', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'gateway',
+                height: 40,
+                child: Row(
+                  children: [
+                    Icon(Icons.dns_rounded, size: 16, color: HermesTheme.primaryLight),
+                    SizedBox(width: 10),
+                    Text('网关与集群节点', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
                 value: 'settings',
                 height: 40,
                 child: Row(
@@ -377,7 +1037,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'update',
                 height: 40,
                 child: Row(
@@ -397,6 +1057,7 @@ class _ChatScreenState extends State<ChatScreen> {
         gatewayService: widget.gatewayService,
         activeSessionId: _activeSession?.id,
         onSelectSession: _switchSession,
+        onSessionRenamed: _onSessionRenamed,
         onNewSession: _createNewSession,
       ),
       body: Stack(
@@ -441,7 +1102,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ],
                         ),
                       )
-                    : _messages.isEmpty
+                    : _messages.isEmpty && !_hasOlder
                         ? Center(
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -451,189 +1112,323 @@ class _ChatScreenState extends State<ChatScreen> {
                                   height: 64,
                                   decoration: BoxDecoration(
                                     color: HermesTheme.surfaceLight,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: HermesTheme.borderSubtle),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: HermesTheme.border),
                                   ),
-                                  child: const Icon(Icons.terminal_rounded, size: 30, color: HermesTheme.cyan),
+                                  child: const Icon(Icons.code_rounded, size: 32, color: HermesTheme.primary),
                                 ),
                                 const SizedBox(height: 16),
                                 const Text(
                                   "Hermes Agent 已就绪",
-                                  style: TextStyle(color: HermesTheme.textMain, fontSize: 15, fontWeight: FontWeight.bold),
+                                  style: TextStyle(color: HermesTheme.textMain, fontSize: 16, fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 6),
                                 const Text(
-                                  "可通过下方悬浮输入舱或快捷指令\n下发远程 Linux 运维、搜索与代码任务",
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: HermesTheme.textDim, fontSize: 12.5, height: 1.4),
+                                  "输入指令下发任务，或点击快捷运维芯片",
+                                  style: TextStyle(color: HermesTheme.textDim, fontSize: 13),
                                 ),
                               ],
                             ),
                           )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            // 预留底部 padding，避免被悬浮输入岛遮挡
-                            padding: const EdgeInsets.fromLTRB(14, 14, 14, 120),
-                            itemCount: _messages.length,
-                            itemBuilder: (context, index) {
-                              final msg = _messages[index];
-                              final isUser = msg.role == MessageRole.user;
-
-                              if (isUser) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Container(
-                                      constraints: BoxConstraints(
-                                        maxWidth: MediaQuery.of(context).size.width * 0.84,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                                      decoration: BoxDecoration(
-                                        gradient: HermesTheme.userBubbleGradient,
-                                        borderRadius: const BorderRadius.only(
-                                          topLeft: Radius.circular(18),
-                                          bottomLeft: Radius.circular(18),
-                                          bottomRight: Radius.circular(18),
-                                          topRight: Radius.circular(4),
-                                        ),
-                                        border: Border.all(color: Colors.white.withOpacity(0.12), width: 0.8),
-                                        boxShadow: const [HermesTheme.primaryGlow],
-                                      ),
-                                      child: SelectableText(
-                                        msg.content,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13.5,
-                                          height: 1.45,
-                                          letterSpacing: 0.1,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
+                        : NotificationListener<UserScrollNotification>(
+                            onNotification: (notification) {
+                              final follow = notification.metrics.extentAfter < 120;
+                              if (follow != _followLatest) {
+                                setState(() => _followLatest = follow);
                               }
-
-                              // Assistant 回复气泡
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 18),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Agent 智能体徽标头像
-                                    Container(
-                                      width: 28,
-                                      height: 28,
-                                      margin: const EdgeInsets.only(right: 10, top: 2),
-                                      decoration: BoxDecoration(
-                                        gradient: const LinearGradient(
-                                          colors: [Color(0xFF4338CA), Color(0xFF6366F1)],
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
+                              return false;
+                            },
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.only(
+                                left: 14,
+                                right: 14,
+                                top: 12,
+                                bottom: 150, // 避让输入栏和快捷芯片
+                              ),
+                              itemCount: _messages.length + (_hasOlder ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                // 历史翻页头部
+                                if (_hasOlder && index == 0) {
+                                  return Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      child: TextButton.icon(
+                                        onPressed: _loadingOlder ? null : _loadOlder,
+                                        icon: _loadingOlder
+                                            ? const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child: CircularProgressIndicator(strokeWidth: 1.8, color: HermesTheme.primary),
+                                              )
+                                            : const Icon(Icons.history_rounded, size: 16),
+                                        label: Text(
+                                          _loadingOlder ? '正在加载更早记录...' : '加载更早的指令记录',
+                                          style: const TextStyle(fontSize: 12, color: HermesTheme.textMuted),
                                         ),
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: HermesTheme.primary.withOpacity(0.4), width: 0.8),
                                       ),
-                                      child: const Icon(Icons.auto_awesome_rounded, size: 15, color: Colors.white),
                                     ),
+                                  );
+                                }
 
-                                    // 主体卡片
-                                    Expanded(
-                                      child: Container(
-                                        padding: const EdgeInsets.all(14),
-                                        decoration: BoxDecoration(
-                                          color: HermesTheme.surface,
-                                          borderRadius: const BorderRadius.only(
-                                            topRight: Radius.circular(18),
-                                            bottomLeft: Radius.circular(18),
-                                            bottomRight: Radius.circular(18),
-                                            topLeft: Radius.circular(4),
+                                final msg = _messages[index - (_hasOlder ? 1 : 0)];
+                                final isUser = msg.role == MessageRole.user;
+
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 18),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                    children: [
+                                      // Assistant 头像
+                                      if (!isUser) ...[
+                                        Container(
+                                          width: 30,
+                                          height: 30,
+                                          margin: const EdgeInsets.only(right: 10, top: 2),
+                                          decoration: BoxDecoration(
+                                            gradient: HermesTheme.assistantBubbleGradient,
+                                            borderRadius: BorderRadius.circular(9),
+                                            border: Border.all(color: HermesTheme.borderSubtle),
                                           ),
-                                          border: Border.all(color: HermesTheme.border, width: 1),
+                                          child: const Icon(Icons.smart_toy_rounded, size: 17, color: HermesTheme.primaryLight),
                                         ),
+                                      ],
+
+                                      // 气泡主体
+                                      Flexible(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                                           children: [
-                                            // 1. 深度推导思维链折叠块
-                                            if (msg.thinking.isNotEmpty || (msg.isStreaming && msg.content.isEmpty)) ...[
+                                            // 思考过程抽屉
+                                            if (!isUser && msg.thinking.isNotEmpty) ...[
                                               ThinkingBubble(
                                                 thinking: msg.thinking,
                                                 isStreaming: msg.isStreaming,
                                               ),
+                                              const SizedBox(height: 8),
                                             ],
 
-                                            // 2. 特工工具执行卡片流
-                                            if (msg.toolCalls.isNotEmpty) ...[
-                                              for (final tool in msg.toolCalls) ToolCard(toolCall: tool),
+                                            // 工具调用卡片
+                                            if (!isUser && msg.toolCalls.isNotEmpty) ...[
+                                              for (final tool in msg.toolCalls) ...[
+                                                ToolCard(toolCall: tool),
+                                                const SizedBox(height: 8),
+                                              ],
                                             ],
 
-                                            // 3. 正文 Markdown 流式呈现
-                                            MarkdownBody(
-                                              data: msg.content.isEmpty && msg.isStreaming ? "▍" : msg.content,
-                                              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                                                p: const TextStyle(
-                                                  fontSize: 13.5,
-                                                  color: HermesTheme.textMain,
-                                                  height: 1.55,
-                                                  letterSpacing: 0.1,
+                                            // 气泡卡片
+                                            if (msg.content.isNotEmpty || msg.attachments.isNotEmpty || (msg.isStreaming && !isUser))
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                                decoration: BoxDecoration(
+                                                  gradient: isUser ? HermesTheme.userBubbleGradient : null,
+                                                  color: isUser ? null : HermesTheme.surfaceElevated,
+                                                  borderRadius: BorderRadius.only(
+                                                    topLeft: const Radius.circular(14),
+                                                    topRight: const Radius.circular(14),
+                                                    bottomLeft: Radius.circular(isUser ? 14 : 3),
+                                                    bottomRight: Radius.circular(isUser ? 3 : 14),
+                                                  ),
+                                                  border: isUser
+                                                      ? null
+                                                      : Border.all(color: HermesTheme.borderSubtle, width: 0.8),
+                                                  boxShadow: isUser
+                                                      ? const [HermesTheme.primaryGlow]
+                                                      : const [HermesTheme.elevation1],
                                                 ),
-                                                code: const TextStyle(
-                                                  fontFamily: 'monospace',
-                                                  backgroundColor: Color(0xFF090B12),
-                                                  color: Color(0xFF38BDF8),
-                                                  fontSize: 12,
-                                                ),
-                                                codeblockDecoration: BoxDecoration(
-                                                  color: const Color(0xFF090B12),
-                                                  borderRadius: BorderRadius.circular(10),
-                                                  border: Border.all(color: HermesTheme.border),
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    // 用户上传的附件胶囊
+                                                    if (isUser && msg.attachments.isNotEmpty)
+                                                      Padding(
+                                                        padding: const EdgeInsets.only(bottom: 8),
+                                                        child: Wrap(
+                                                          spacing: 6,
+                                                          runSpacing: 6,
+                                                          children: msg.attachments.map((name) {
+                                                            return Container(
+                                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                              decoration: BoxDecoration(
+                                                                color: Colors.white.withOpacity(0.15),
+                                                                borderRadius: BorderRadius.circular(8),
+                                                              ),
+                                                              child: Row(
+                                                                mainAxisSize: MainAxisSize.min,
+                                                                children: [
+                                                                  const Icon(Icons.attach_file_rounded, size: 13, color: Colors.white),
+                                                                  const SizedBox(width: 4),
+                                                                  ConstrainedBox(
+                                                                    constraints: const BoxConstraints(maxWidth: 160),
+                                                                    child: Text(
+                                                                      name,
+                                                                      style: const TextStyle(fontSize: 11.5, color: Colors.white),
+                                                                      overflow: TextOverflow.ellipsis,
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                             ),
+                                                            );
+                                                          }).toList(),
+                                                        ),
+                                                      ),
+
+                                                    // 正文内容
+                                                    if (isUser)
+                                                      SelectableText(
+                                                        msg.content,
+                                                        style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.45),
+                                                      )
+                                                    else
+                                                      MarkdownBody(
+                                                        data: msg.content.isEmpty && msg.isStreaming ? "▌" : msg.content,
+                                                        selectable: true,
+                                                        styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                                                          p: const TextStyle(fontSize: 14, color: HermesTheme.textMain, height: 1.55),
+                                                          code: const TextStyle(
+                                                            fontFamily: 'monospace',
+                                                            backgroundColor: HermesTheme.surfaceLight,
+                                                            fontSize: 12.5,
+                                                            color: HermesTheme.accent,
+                                                          ),
+                                                          codeblockDecoration: BoxDecoration(
+                                                            color: HermesTheme.surface,
+                                                            borderRadius: BorderRadius.circular(8),
+                                                            border: Border.all(color: HermesTheme.borderSubtle),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                  ],
                                                 ),
                                               ),
-                                            ),
 
-                                            // 4. 底部微型工具栏 (复制回答、时间)
-                                            if (!msg.isStreaming && msg.content.isNotEmpty) ...[
-                                              const SizedBox(height: 10),
-                                              Row(
-                                                mainAxisAlignment: MainAxisAlignment.end,
-                                                children: [
-                                                  Text(
-                                                    DateFormat('HH:mm').format(msg.createdAt),
-                                                    style: const TextStyle(fontSize: 10, color: HermesTheme.textDim),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  InkWell(
-                                                    onTap: () => _copyToClipboard(msg.content, '已复制回答内容'),
-                                                    borderRadius: BorderRadius.circular(4),
-                                                    child: const Padding(
-                                                      padding: EdgeInsets.all(4),
-                                                      child: Icon(Icons.copy_rounded, size: 13, color: HermesTheme.textDim),
+                                            // 消息下方操作按钮栏 (复制/分享/重试)
+                                            if (!msg.isStreaming)
+                                              Padding(
+                                                padding: const EdgeInsets.only(top: 4),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    IconButton(
+                                                      icon: const Icon(Icons.copy_rounded, size: 14, color: HermesTheme.textDim),
+                                                      tooltip: isUser ? "复制指令" : "复制回答",
+                                                      visualDensity: VisualDensity.compact,
+                                                      onPressed: () => _copyToClipboard(
+                                                        msg.content,
+                                                        isUser ? "已复制指令内容" : "已复制回答内容",
+                                                      ),
                                                     ),
-                                                  ),
-                                                ],
+                                                    if (!isUser) ...[
+                                                      IconButton(
+                                                        icon: const Icon(Icons.share_outlined, size: 14, color: HermesTheme.textDim),
+                                                        tooltip: "系统分享",
+                                                        visualDensity: VisualDensity.compact,
+                                                        onPressed: () async {
+                                                          try {
+                                                            await const MethodChannel('com.hermes.mobile/files')
+                                                                .invokeMethod<void>('shareText', {'text': msg.content});
+                                                          } catch (_) {
+                                                            _copyToClipboard(msg.content, "已复制内容至剪贴板");
+                                                          }
+                                                        },
+                                                      ),
+                                                      if (index == _messages.length - 1 + (_hasOlder ? 1 : 0))
+                                                        IconButton(
+                                                          icon: const Icon(Icons.refresh_rounded, size: 15, color: HermesTheme.textDim),
+                                                          tooltip: "重新生成回答",
+                                                          visualDensity: VisualDensity.compact,
+                                                          onPressed: _regenerateLastReply,
+                                                        ),
+                                                    ],
+                                                  ],
+                                                ),
                                               ),
-                                            ],
                                           ],
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+
+                                      // User 头像
+                                      if (isUser) ...[
+                                        Container(
+                                          width: 30,
+                                          height: 30,
+                                          margin: const EdgeInsets.only(left: 10, top: 2),
+                                          decoration: BoxDecoration(
+                                            color: HermesTheme.surfaceLight,
+                                            borderRadius: BorderRadius.circular(9),
+                                            border: Border.all(color: HermesTheme.borderSubtle),
+                                          ),
+                                          child: const Icon(Icons.person_rounded, size: 18, color: HermesTheme.textMuted),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                           ),
           ),
 
-          // 悬浮底部输入控制岛
+          // 待审批操作浮层 (若有审批请求则置顶展示)
+          if (_approvals.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: SafeArea(
+                child: Column(
+                  children: _approvals.map((app) => _buildApprovalCard(app)).toList(),
+                ),
+              ),
+            ),
+
+          // 悬浮：返回最新消息 FAB
+          if (!_followLatest)
+            Positioned(
+              right: 16,
+              bottom: 140,
+              child: FloatingActionButton.small(
+                backgroundColor: HermesTheme.surfaceElevated,
+                foregroundColor: HermesTheme.accent,
+                tooltip: "返回最新消息",
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: HermesTheme.borderSubtle),
+                ),
+                onPressed: () => _scrollToBottom(force: true),
+                child: const Icon(Icons.arrow_downward_rounded, size: 18),
+              ),
+            ),
+
+          // 底部输入控制台
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
             child: ChatInputBar(
-              onSend: _sendMessage,
-              onStop: _stopGeneration,
+              key: ValueKey('chat-input-${_activeSession?.id ?? 'none'}-${_loadedDrafts.contains(_activeSession?.id)}'),
               isConnected: _connectionStatus == ConnectionStatus.connected,
+              draftReady: _loadedDrafts.contains(_activeSession?.id),
+              draftText: _drafts[_activeSession?.id] ?? '',
+              draftAttachments: _draftAttachments[_activeSession?.id] ?? const [],
+              onDraftTextChanged: (val) {
+                final id = _activeSession?.id;
+                if (id != null) {
+                  _drafts[id] = val;
+                  final prev = _draftWrites[id] ?? Future<void>.value();
+                  _draftWrites[id] = prev.catchError((_) {}).then((_) => _storage.saveDraft(id, val)).catchError((_) {});
+                }
+              },
+              onDraftAttachmentsChanged: (files) {
+                final id = _activeSession?.id;
+                if (id != null) {
+                  _draftAttachments[id] = files;
+                }
+              },
+              onSend: _sendMessageWithAttachments,
               isStreaming: _isCurrentlyStreaming,
+              onStop: _stopGeneration,
             ),
           ),
         ],
