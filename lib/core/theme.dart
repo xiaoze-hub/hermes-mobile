@@ -11,6 +11,7 @@ class HermesTheme {
 
   // 先进品牌与功能状态色
   static const Color primary = Color(0xFF6366F1);        // Hermes 主题紫
+  static const Color primaryLight = Color(0xFF818CF8);   // 高亮淡紫
   static const Color primaryDark = Color(0xFF4F46E5);    // 渐变深紫
   static const Color accent = Color(0xFF10B981);         // 翡翠终端绿 (Connected / Shell)
   static const Color warning = Color(0xFFF59E0B);        // 思考脉冲金 (Thinking / Running)
@@ -35,6 +36,12 @@ class HermesTheme {
     offset: Offset(0, 4),
   );
 
+  static const BoxShadow elevation1 = BoxShadow(
+    color: Color(0x22000000),
+    blurRadius: 8,
+    offset: Offset(0, 2),
+  );
+
   static const BoxShadow thinkingGlow = BoxShadow(
     color: Color(0x22F59E0B),
     blurRadius: 12,
@@ -43,6 +50,12 @@ class HermesTheme {
 
   static const LinearGradient userBubbleGradient = LinearGradient(
     colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const LinearGradient assistantBubbleGradient = LinearGradient(
+    colors: [Color(0xFF1E273C), Color(0xFF161C2C)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
