@@ -2,6 +2,6 @@
   "version": "1.4.5",
   "buildNumber": 14,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "",
+  "sha256": "156019cad2a8c1c388ca78a3b21a315f1e8dbad2c5903192d9def03c0ce44587",
   "notes": "1. 极致原生性能与体积瘦身：开启 R8 FullMode 编译优化、代码混淆与无用资源缩减 (shrinkResources)，显著降低包体积与内存占用。\n2. 全链路异步 I/O 与防 ANR：原生接入 Hermes-IO 专用守护线程池，文件读写与路径检测全面解耦主线程 Looper。\n3. Flutter 流式渲染与计算加速：大附件 base64 移至独立 Isolate (compute) 异步处理，消息列表接入 RepaintBoundary 帧级重绘隔离。\n4. 完备的系统级任务完成状态栏横幅、触觉震动与一键通道检测。"
 }
