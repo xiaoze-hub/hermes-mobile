@@ -531,7 +531,7 @@ class _ChatScreenState extends State<ChatScreen> {
     buffer.writeln('\n---\n');
 
     for (final msg in _messages) {
-      final role = msg.isUser ? '👤 用户' : '🤖 Hermes Agent';
+      final role = msg.role == MessageRole.user ? '👤 用户' : '🤖 Hermes Agent';
       buffer.writeln('### $role\n');
       if (msg.content.isNotEmpty) {
         buffer.writeln(msg.content);
@@ -543,10 +543,10 @@ class _ChatScreenState extends State<ChatScreen> {
           if (tc.arguments.isNotEmpty) {
             buffer.writeln('> 参数: ${tc.arguments}');
           }
-          if (tc.output != null && tc.output!.isNotEmpty) {
+          if (tc.result != null && tc.result!.isNotEmpty) {
             buffer.writeln('>\n> 执行结果:');
             buffer.writeln('> ```');
-            for (final line in tc.output!.split('\n')) {
+            for (final line in tc.result!.split('\n')) {
               buffer.writeln('> $line');
             }
             buffer.writeln('> ```');
