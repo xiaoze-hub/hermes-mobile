@@ -1,7 +1,7 @@
 {
-  "version": "1.4.0",
-  "buildNumber": 9,
+  "version": "1.4.1",
+  "buildNumber": 10,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "0b17185d3787918ab4f414090bc09e0fbda152086ac0e58a1f0c256e0d6f8cbd",
-  "notes": "1. 桌面级多会话横向标签栏 (Session Tab Strip)：支持多任务会话水平并列与毫秒级即时切换。\n2. 桌面级工作区控制台 (Workspace Rails Drawer)：滑出式终端控制台、工作区文件目录树快速浏览与会话工件/Diff补丁收纳舱。\n3. 桌面级 Slash 命令快捷面板 ([/] Command Palette)：Docker/Top/Git/Cron/Subagent 9大快捷宏指令一键填装。\n4. 后台任务全景活动监视条、上下文透视芯片与多网关集群热切换全面增强。"
+  "sha256": "a4ef1a043405ba2dc59098c1396e2a2834f261f4e81e19a731e5a68fcec8df52",
+  "notes": "1. 统一系统设置与控制中枢 (System Settings)：整合网关集群中枢、特工调度、桌面交互偏好、PIN安全锁与运维缓存清理。\n2. 会话抽屉与菜单结构精简：底部常驻系统设置入口，告别零散菜单。\n3. 固件在线更新全面搭载防边缘缓存动态穿透与多镜像竞速机制。"
 }
