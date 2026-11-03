@@ -63,7 +63,8 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-              "notes": "1. 升级多源镜像容灾网络，支持 jsDelivr 全球加速及多线路国内镜像。\n2. 修复更新包清单数据类型解析问题，大幅提升下载成功率与速度。"
+              "notes": "1. 升级多源镜像容灾网络，支持 jsDelivr 全球加速及多线路国内镜像。
+2. 修复更新包清单数据类型解析问题，大幅提升下载成功率与速度。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
