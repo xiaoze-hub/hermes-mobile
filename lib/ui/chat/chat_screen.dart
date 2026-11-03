@@ -1218,7 +1218,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-              PopupMenuDivider(height: 1),
+              PopupMenuItem<String>(
+                enabled: false,
+                height: 1,
+                child: Divider(color: HermesTheme.borderSubtle, height: 1),
+              ),
               PopupMenuItem(
                 value: 'cluster',
                 height: 38,

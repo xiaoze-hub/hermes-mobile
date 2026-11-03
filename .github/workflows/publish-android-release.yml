@@ -41,9 +41,21 @@ jobs:
       - name: Install dependencies and build APK
         run: |
           flutter pub get
-          flutter analyze
-          flutter build apk --release
+          flutter analyze > analyze.log 2>&1 || (cat analyze.log && cp analyze.log build_error.txt && exit 1)
+          flutter build apk --release > build.log 2>&1 || (cat build.log | tail -n 80 && cp build.log build_error.txt && exit 1)
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
+      - name: Record error log on failure
+        if: failure()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git fetch origin main
+          git checkout main
+          git pull origin main
+          git add build_error.txt || true
+          git commit -m "ci: capture build error [skip ci]" || true
+          git push origin main || true
       - name: Create update manifest
         env:
           TAG_NAME: ${{ github.ref_name }}
