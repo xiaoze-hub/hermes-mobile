@@ -36,6 +36,14 @@ class MainActivity: FlutterActivity() {
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechServicePackage: String? = null
 
+    private val ioExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable).apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY - 1
+            name = "Hermes-IO-Worker"
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -126,20 +134,30 @@ class MainActivity: FlutterActivity() {
                     return@setMethodCallHandler
                 }
                 if (call.method == "getAppUpdateInfo") {
-                    val versionInfo = packageManager.getPackageInfo(packageName, 0)
-                    val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        versionInfo.longVersionCode
-                    } else {
-                        @Suppress("DEPRECATION") versionInfo.versionCode.toLong()
+                    ioExecutor.execute {
+                        try {
+                            val versionInfo = packageManager.getPackageInfo(packageName, 0)
+                            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                versionInfo.longVersionCode
+                            } else {
+                                @Suppress("DEPRECATION") versionInfo.versionCode.toLong()
+                            }
+                            val updateDir = java.io.File(cacheDir, "updates")
+                            if (!updateDir.exists()) updateDir.mkdirs()
+                            runOnUiThread {
+                                result.success(mapOf(
+                                    "version" to (versionInfo.versionName ?: "0.0.0"),
+                                    "buildNumber" to versionCode,
+                                    "updateDirectory" to updateDir.absolutePath,
+                                    "packageName" to packageName
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                result.error("info_error", e.message, null)
+                            }
+                        }
                     }
-                    val updateDir = java.io.File(cacheDir, "updates")
-                    updateDir.mkdirs()
-                    result.success(mapOf(
-                        "version" to (versionInfo.versionName ?: "0.0.0"),
-                        "buildNumber" to versionCode,
-                        "updateDirectory" to updateDir.absolutePath,
-                        "packageName" to packageName
-                    ))
                     return@setMethodCallHandler
                 }
                 if (call.method == "installApk") {
@@ -155,22 +173,35 @@ class MainActivity: FlutterActivity() {
                         result.success("permission_required")
                         return@setMethodCallHandler
                     }
-                    try {
-                        val apk = java.io.File(path)
-                        if (!apk.isFile || !apk.canonicalPath.startsWith(java.io.File(cacheDir, "updates").canonicalPath + java.io.File.separator)) {
-                            result.error("apk_invalid_path", "更新文件路径无效", null)
-                            return@setMethodCallHandler
+                    ioExecutor.execute {
+                        try {
+                            val apk = java.io.File(path)
+                            val updatesDir = java.io.File(cacheDir, "updates")
+                            if (!apk.isFile || !apk.canonicalPath.startsWith(updatesDir.canonicalPath + java.io.File.separator)) {
+                                runOnUiThread {
+                                    result.error("apk_invalid_path", "更新文件路径无效", null)
+                                }
+                                return@execute
+                            }
+                            val apkUri = androidx.core.content.FileProvider.getUriForFile(
+                                this@MainActivity, "$packageName.fileprovider", apk
+                            )
+                            runOnUiThread {
+                                try {
+                                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(apkUri, "application/vnd.android.package-archive")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    })
+                                    result.success("installer_opened")
+                                } catch (err: Exception) {
+                                    result.error("installer_failed", "无法打开系统安装器", err.message)
+                                }
+                            }
+                        } catch (error: Exception) {
+                            runOnUiThread {
+                                result.error("installer_failed", error.message, null)
+                            }
                         }
-                        val apkUri = androidx.core.content.FileProvider.getUriForFile(
-                            this, "$packageName.fileprovider", apk
-                        )
-                        startActivity(Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(apkUri, "application/vnd.android.package-archive")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        })
-                        result.success("installer_opened")
-                    } catch (error: Exception) {
-                        result.error("installer_failed", "无法打开系统安装器", error.message)
                     }
                     return@setMethodCallHandler
                 }
@@ -349,6 +380,9 @@ class MainActivity: FlutterActivity() {
         destroySpeechRecognizer()
         speechResult?.error("activity_closed", "语音输入已关闭", null)
         speechResult = null
+        try {
+            ioExecutor.shutdown()
+        } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -378,7 +412,7 @@ class MainActivity: FlutterActivity() {
             callback.success(emptyList<Map<String, Any>>())
             return
         }
-        Thread {
+        ioExecutor.execute {
             try {
                 val uris = mutableListOf<Uri>()
                 data.clipData?.let { clip ->
@@ -390,7 +424,7 @@ class MainActivity: FlutterActivity() {
                         val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                         if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
                     } ?: "attachment"
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    val bytes = contentResolver.openInputStream(uri)?.buffered()?.use { it.readBytes() }
                         ?: throw IllegalStateException("Unable to read $name")
                     mapOf("name" to name, "bytes" to bytes)
                 }
@@ -402,6 +436,6 @@ class MainActivity: FlutterActivity() {
                     callback.error("file_read_failed", error.message, null)
                 }
             }
-        }.start()
+        }
     }
 }

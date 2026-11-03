@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../core/storage.dart';
@@ -999,7 +1000,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (bytes.length > 15 * 1024 * 1024) {
         throw StateError('${file.name} 超过 15 MB 上传限制');
       }
-      final encoded = base64Encode(bytes);
+      final encoded = await compute(base64Encode, bytes);
       final ext = file.extension;
 
       if (ext == 'pdf') {
@@ -1612,16 +1613,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                 final msg = _messages[index - (_hasOlder ? 1 : 0)];
                                 final isUser = msg.role == MessageRole.user;
 
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 18),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-                                    children: [
-                                      // Assistant 头像
-                                      if (!isUser) ...[
-                                        Container(
-                                          width: 30,
+                                return RepaintBoundary(
+                                  key: ValueKey(msg.id),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 18),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                                      children: [
+                                        // Assistant 头像
+                                        if (!isUser) ...[
+                                          Container(
+                                            width: 30,
                                           height: 30,
                                           margin: const EdgeInsets.only(right: 10, top: 2),
                                           decoration: BoxDecoration(
@@ -1802,7 +1805,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ],
                                     ],
                                   ),
-                                );
+                                ),
+                              );
                               },
                             ),
                           ),

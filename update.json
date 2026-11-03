@@ -1,7 +1,7 @@
 {
-  "version": "1.4.4",
-  "buildNumber": 13,
+  "version": "1.4.5",
+  "buildNumber": 14,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "9925b0827c3254cd61dcbf2cb765e86c96a0cdb4074702e6f45e859d557d5d52",
-  "notes": "1. 任务完成系统通知与触觉震动：长耗时命令、定时任务与特工协同完毕即时拉起状态栏横幅与内容摘要。\n2. Android 13+ 运行时通知权限完整适配，设置页新增即时测试通知与振动通道。\n3. 聊天顶栏操作精简：支持会话重命名、Markdown 对话导出与单会话消息清空。\n4. 修复文件读取主线程 ANR 隐患，全面优化后台任务响应体验。"
+  "sha256": "",
+  "notes": "1. 极致原生性能与体积瘦身：开启 R8 FullMode 编译优化、代码混淆与无用资源缩减 (shrinkResources)，显著降低包体积与内存占用。\n2. 全链路异步 I/O 与防 ANR：原生接入 Hermes-IO 专用守护线程池，文件读写与路径检测全面解耦主线程 Looper。\n3. Flutter 流式渲染与计算加速：大附件 base64 移至独立 Isolate (compute) 异步处理，消息列表接入 RepaintBoundary 帧级重绘隔离。\n4. 完备的系统级任务完成状态栏横幅、触觉震动与一键通道检测。"
 }
