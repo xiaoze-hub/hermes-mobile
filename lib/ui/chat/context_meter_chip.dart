@@ -20,7 +20,6 @@ class ContextMeterChip extends StatefulWidget {
 
 class _ContextMeterChipState extends State<ContextMeterChip> {
   Map<String, dynamic>? _contextData;
-  bool _loading = false;
 
   @override
   void initState() {
@@ -39,18 +38,14 @@ class _ContextMeterChipState extends State<ContextMeterChip> {
 
   Future<void> _fetchContext() async {
     if (widget.sessionId.isEmpty || !widget.gateway.supportsJsonRpc) return;
-    setState(() => _loading = true);
     try {
       final res = await widget.gateway.sessionContext(widget.sessionId);
       if (mounted) {
         setState(() {
           _contextData = res;
-          _loading = false;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
+    } catch (_) {}
   }
 
   void _showContextDetails() {

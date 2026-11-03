@@ -4,7 +4,6 @@ import '../../core/storage.dart';
 import '../../core/theme.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
-import '../settings/app_update_screen.dart';
 import '../settings/system_settings_screen.dart';
 
 class SessionDrawer extends StatefulWidget {

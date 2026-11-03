@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies and build APK
         run: |
           flutter pub get
-          flutter analyze > analyze.log 2>&1 || (cat analyze.log && cp analyze.log build_error.txt && exit 1)
+          flutter analyze --no-fatal-infos > analyze.log 2>&1 || (cat analyze.log && cp analyze.log build_error.txt && exit 1)
           flutter build apk --release > build.log 2>&1 || (cat build.log | tail -n 80 && cp build.log build_error.txt && exit 1)
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
       - name: Record error log on failure

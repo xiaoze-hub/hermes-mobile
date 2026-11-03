@@ -464,9 +464,9 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           colors: [
-            const Color(0xFF161F36),
+            Color(0xFF161F36),
             HermesTheme.surface,
           ],
           begin: Alignment.topLeft,
