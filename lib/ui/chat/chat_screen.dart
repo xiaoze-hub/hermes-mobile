@@ -19,6 +19,8 @@ import 'thinking_bubble.dart';
 import 'tool_card.dart';
 import 'active_tasks_banner.dart';
 import 'context_meter_chip.dart';
+import 'session_tab_strip.dart';
+import 'workspace_rail_drawer.dart';
 import '../settings/gateway_cluster_dialog.dart';
 
 
@@ -37,6 +39,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final HermesStorage _storage = HermesStorage();
 
   HermesSession? _activeSession;
+  final List<HermesSession> _openTabs = [];
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _loadingHistory = false;
   String? _loadHistoryError;
@@ -336,21 +339,45 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadOrRestoreSession() async {
     try {
       final sessions = await widget.gatewayService.getSessions();
+      final savedTabIds = await _storage.getOpenTabSessionIds();
+
+      if (savedTabIds.isNotEmpty && sessions.isNotEmpty) {
+        _openTabs.clear();
+        for (final id in savedTabIds) {
+          final s = sessions.where((x) => x.id == id).firstOrNull;
+          if (s != null) _openTabs.add(s);
+        }
+      }
+
+      if (_openTabs.isEmpty && sessions.isNotEmpty) {
+        _openTabs.addAll(sessions.take(4));
+      }
+
       if (sessions.isNotEmpty) {
         final lastId = await _storage.getLastSessionId();
-        final match = sessions.firstWhere((s) => s.id == lastId, orElse: () => sessions.first);
+        final match = sessions.firstWhere((s) => s.id == lastId,
+            orElse: () => _openTabs.isNotEmpty ? _openTabs.first : sessions.first);
+        if (!_openTabs.any((t) => t.id == match.id)) {
+          _openTabs.insert(0, match);
+        }
         _switchSession(match);
       } else {
         _createNewSession();
       }
     } catch (_) {
-      _switchSession(HermesSession(id: 'default', title: '主指令会话', updatedAt: DateTime.now()));
+      final fallback = HermesSession(id: 'default', title: '主指令会话', updatedAt: DateTime.now());
+      _openTabs.clear();
+      _openTabs.add(fallback);
+      _switchSession(fallback);
     }
   }
 
   void _switchSession(HermesSession session) {
     setState(() {
       _activeSession = session;
+      if (!_openTabs.any((t) => t.id == session.id)) {
+        _openTabs.add(session);
+      }
       _messages.clear();
       _approvals.clear();
       _loadHistoryError = null;
@@ -359,6 +386,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     _storage.saveLastSessionId(session.id);
+    _storage.saveOpenTabSessionIds(_openTabs.map((t) => t.id).toList());
     widget.gatewayService.connectWebSocket(session.id);
     _loadSessionHistory(session.id);
 
@@ -377,12 +405,30 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _closeTab(HermesSession session) {
+    setState(() {
+      _openTabs.removeWhere((t) => t.id == session.id);
+      if (_activeSession?.id == session.id) {
+        if (_openTabs.isNotEmpty) {
+          _switchSession(_openTabs.last);
+        } else {
+          _createNewSession();
+        }
+      }
+      _storage.saveOpenTabSessionIds(_openTabs.map((t) => t.id).toList());
+    });
+  }
+
   void _onSessionRenamed(HermesSession renamed) {
-    if (_activeSession?.id == renamed.id) {
-      setState(() {
+    setState(() {
+      if (_activeSession?.id == renamed.id) {
         _activeSession = renamed;
-      });
-    }
+      }
+      final idx = _openTabs.indexWhere((t) => t.id == renamed.id);
+      if (idx != -1) {
+        _openTabs[idx] = renamed;
+      }
+    });
   }
 
   Future<void> _createNewSession() async {
@@ -1083,6 +1129,16 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 4),
 
+          // 桌面级工作区控制台 (Workspace Rails) 快捷抽屉
+          Builder(
+            builder: (drawerCtx) => IconButton(
+              icon: const Icon(Icons.developer_board_rounded, size: 20, color: HermesTheme.accent),
+              tooltip: "工作区控制台 (终端/文件/工件)",
+              onPressed: () => Scaffold.of(drawerCtx).openEndDrawer(),
+            ),
+          ),
+          const SizedBox(width: 2),
+
           // 新建会话按钮
           IconButton(
             icon: const Icon(Icons.edit_square, size: 19, color: HermesTheme.textMain),
@@ -1201,6 +1257,16 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 4),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(38),
+          child: SessionTabStrip(
+            tabs: _openTabs,
+            activeSessionId: _activeSession?.id ?? '',
+            onSelectTab: _switchSession,
+            onCloseTab: _closeTab,
+            onNewTab: _createNewSession,
+          ),
+        ),
       ),
       drawer: SessionDrawer(
         gatewayService: widget.gatewayService,
@@ -1209,6 +1275,14 @@ class _ChatScreenState extends State<ChatScreen> {
         onSessionRenamed: _onSessionRenamed,
         onNewSession: _createNewSession,
       ),
+      endDrawer: _activeSession == null
+          ? null
+          : WorkspaceRailDrawer(
+              gateway: widget.gatewayService,
+              sessionId: _activeSession!.id,
+              messages: _messages,
+              onSendCommand: (cmd) => _sendMessageWithAttachments(cmd, const []),
+            ),
       body: Stack(
         children: [
           // 消息流列表

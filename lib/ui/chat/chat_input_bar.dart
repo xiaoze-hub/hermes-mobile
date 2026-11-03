@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme.dart';
+import 'slash_command_palette.dart';
 
 class ChatPickedFile {
   final String name;
@@ -45,6 +46,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   bool _listening = false;
   bool _uploading = false;
   bool _sending = false;
+  bool _showSlashPalette = false;
 
   // Linux 常用运维指令宏
   final List<Map<String, String>> _quickMacros = [
@@ -251,29 +253,72 @@ class _ChatInputBarState extends State<ChatInputBar> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 1. 横向快捷运维宏指令栏 (Quick Macros)
+            // 0. 桌面级 Slash 命令快捷面板
+            if (_showSlashPalette || (_controller.text.startsWith('/') && !_controller.text.contains('\n') && _controller.text.length < 25))
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                constraints: const BoxConstraints(maxHeight: 250),
+                child: SlashCommandPalette(
+                  query: _controller.text,
+                  onSelect: (item) {
+                    _applyMacro(item.prompt);
+                    setState(() => _showSlashPalette = false);
+                  },
+                ),
+              ),
+
+            // 1. 横向快捷运维宏指令栏 (Quick Macros & Slash Trigger)
             SizedBox(
               height: 30,
-              child: ListView.separated(
+              child: ListView(
                 scrollDirection: Axis.horizontal,
-                itemCount: _quickMacros.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (context, index) {
-                  final macro = _quickMacros[index];
-                  return ActionChip(
+                children: [
+                  ActionChip(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     visualDensity: VisualDensity.compact,
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    backgroundColor: HermesTheme.surfaceLight,
-                    side: const BorderSide(color: HermesTheme.borderSubtle, width: 0.8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    label: Text(
-                      macro['label']!,
-                      style: const TextStyle(fontSize: 10.5, color: HermesTheme.textMuted),
+                    backgroundColor: _showSlashPalette
+                        ? HermesTheme.primary.withOpacity(0.25)
+                        : HermesTheme.surfaceLight,
+                    side: BorderSide(
+                      color: _showSlashPalette ? HermesTheme.accent : HermesTheme.borderSubtle,
+                      width: 0.9,
                     ),
-                    onPressed: widget.isConnected ? () => _applyMacro(macro['cmd']!) : null,
-                  );
-                },
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    avatar: const Icon(Icons.terminal_rounded, size: 13, color: HermesTheme.accent),
+                    label: const Text(
+                      '[/] 指令面板',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: HermesTheme.accent,
+                      ),
+                    ),
+                    onPressed: () {
+                      setState(() => _showSlashPalette = !_showSlashPalette);
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  ...List.generate(_quickMacros.length, (index) {
+                    final macro = _quickMacros[index];
+                    return Padding(
+                      padding: EdgeInsets.only(right: index == _quickMacros.length - 1 ? 0 : 6),
+                      child: ActionChip(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        backgroundColor: HermesTheme.surfaceLight,
+                        side: const BorderSide(color: HermesTheme.borderSubtle, width: 0.8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        label: Text(
+                          macro['label']!,
+                          style: const TextStyle(fontSize: 10.5, color: HermesTheme.textMuted),
+                        ),
+                        onPressed: widget.isConnected ? () => _applyMacro(macro['cmd']!) : null,
+                      ),
+                    );
+                  }),
+                ],
               ),
             ),
             const SizedBox(height: 6),

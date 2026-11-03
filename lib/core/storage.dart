@@ -158,4 +158,15 @@ class HermesStorage {
       await _secureStorage.write(key: 'hermes_security_pin', value: pin);
     }
   }
+
+  // --- 桌面级多标签栏会话记录 ---
+  Future<List<String>> getOpenTabSessionIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList('hermes_open_tab_sessions') ?? [];
+  }
+
+  Future<void> saveOpenTabSessionIds(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('hermes_open_tab_sessions', ids);
+  }
 }
