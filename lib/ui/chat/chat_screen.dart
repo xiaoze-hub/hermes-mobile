@@ -9,8 +9,6 @@ import '../../models/chat_message.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
 import '../sessions/session_drawer.dart';
-import '../settings/agent_workspace_screen.dart';
-import '../settings/app_update_screen.dart';
 import 'chat_input_bar.dart';
 import 'thinking_bubble.dart';
 import 'tool_card.dart';
@@ -18,7 +16,6 @@ import 'active_tasks_banner.dart';
 import 'context_meter_chip.dart';
 import 'session_tab_strip.dart';
 import 'workspace_rail_drawer.dart';
-import '../settings/gateway_cluster_dialog.dart';
 import '../settings/system_settings_screen.dart';
 
 
@@ -435,6 +432,179 @@ class _ChatScreenState extends State<ChatScreen> {
         _openTabs[idx] = renamed;
       }
     });
+  }
+
+  Future<void> _renameCurrentSession() async {
+    final session = _activeSession;
+    if (session == null) return;
+    final controller = TextEditingController(text: session.title);
+    final requestedTitle = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: HermesTheme.surfaceElevated,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('重命名当前会话',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: HermesTheme.textMain)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 80,
+          style: const TextStyle(color: HermesTheme.textMain),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: '会话标题',
+            hintText: '输入新标题...',
+          ),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
+            child: const Text('保存修改'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final title = requestedTitle?.trim();
+    if (title == null || title.isEmpty || title == session.title || !mounted) {
+      return;
+    }
+
+    try {
+      await widget.gatewayService.renameSession(session.id, title);
+      final updated = HermesSession(
+        id: session.id,
+        title: title,
+        updatedAt: DateTime.now(),
+      );
+      if (mounted) {
+        setState(() {
+          _activeSession = updated;
+          final idx = _openTabs.indexWhere((t) => t.id == session.id);
+          if (idx != -1) _openTabs[idx] = updated;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('会话已重命名为「$title」'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('重命名失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  void _exportCurrentSession() {
+    final session = _activeSession;
+    if (session == null || _messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('当前会话暂无消息可导出'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln('# 会话记录: ${session.title}');
+    buffer.writeln('导出时间: ${DateTime.now().toString().substring(0, 19)}');
+    buffer.writeln('消息总数: ${_messages.length}');
+    buffer.writeln('\n---\n');
+
+    for (final msg in _messages) {
+      final role = msg.isUser ? '👤 用户' : '🤖 Hermes Agent';
+      buffer.writeln('### $role\n');
+      if (msg.content.isNotEmpty) {
+        buffer.writeln(msg.content);
+        buffer.writeln();
+      }
+      if (msg.toolCalls.isNotEmpty) {
+        for (final tc in msg.toolCalls) {
+          buffer.writeln('> 🛠️ 工具调用: `${tc.name}`');
+          if (tc.arguments.isNotEmpty) {
+            buffer.writeln('> 参数: ${tc.arguments}');
+          }
+          if (tc.output != null && tc.output!.isNotEmpty) {
+            buffer.writeln('>\n> 执行结果:');
+            buffer.writeln('> ```');
+            for (final line in tc.output!.split('\n')) {
+              buffer.writeln('> $line');
+            }
+            buffer.writeln('> ```');
+          }
+          buffer.writeln();
+        }
+      }
+      buffer.writeln('---\n');
+    }
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已将完整对话记录复制为 Markdown 格式'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _clearCurrentMessages() async {
+    if (_messages.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: HermesTheme.surfaceElevated,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('清空当前对话',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: HermesTheme.textMain)),
+        content: const Text(
+            '确定清空当前对话中的所有消息吗？\n（此操作只清理当前展示界面，不会删除服务端会话记录）',
+            style: TextStyle(fontSize: 13, color: HermesTheme.textMuted)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: HermesTheme.danger),
+            child: const Text('确认清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() {
+        _messages.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('当前对话消息已清空'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _createNewSession() async {
@@ -1152,13 +1322,19 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: _createNewSession,
           ),
 
-          // 更多控制中枢菜单
+          // 当前会话与系统控制菜单
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert_rounded, size: 20, color: HermesTheme.textMain),
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'system_settings') {
+              if (val == 'rename') {
+                _renameCurrentSession();
+              } else if (val == 'export') {
+                _exportCurrentSession();
+              } else if (val == 'clear') {
+                _clearCurrentMessages();
+              } else if (val == 'system_settings') {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => SystemSettingsScreen(
@@ -1173,45 +1349,39 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 );
-              } else if (val == 'cluster') {
-                showDialog(
-                  context: context,
-                  builder: (ctx) => GatewayClusterDialog(
-                    gatewayService: widget.gatewayService,
-                    onSwitched: () {
-                      _loadOrRestoreSession();
-                      _loadCurrentModel();
-                    },
-                  ),
-                );
-              } else if (val == 'workspace') {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => AgentWorkspaceScreen(
-                      gateway: widget.gatewayService,
-                      sessionId: _activeSession?.id ?? '',
-                    ),
-                  ),
-                );
-              } else if (val == 'update') {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AppUpdateScreen()),
-                );
               }
             },
             itemBuilder: (context) => const [
               PopupMenuItem(
-                value: 'system_settings',
-                height: 40,
+                value: 'rename',
+                height: 38,
                 child: Row(
                   children: [
-                    Icon(Icons.settings_rounded, size: 16, color: HermesTheme.primaryLight),
+                    Icon(Icons.edit_outlined, size: 16, color: HermesTheme.accent),
                     SizedBox(width: 10),
-                    Text('系统设置与控制中枢',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: HermesTheme.textMain)),
+                    Text('重命名当前会话', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.file_download_outlined, size: 16, color: HermesTheme.primaryLight),
+                    SizedBox(width: 10),
+                    Text('导出对话 (Markdown)', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'clear',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.cleaning_services_outlined, size: 16, color: HermesTheme.warning),
+                    SizedBox(width: 10),
+                    Text('清空当前对话消息', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
                   ],
                 ),
               ),
@@ -1221,35 +1391,16 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Divider(color: HermesTheme.borderSubtle, height: 1),
               ),
               PopupMenuItem(
-                value: 'cluster',
+                value: 'system_settings',
                 height: 38,
                 child: Row(
                   children: [
-                    Icon(Icons.hub_rounded, size: 16, color: HermesTheme.accent),
+                    Icon(Icons.settings_rounded, size: 16, color: HermesTheme.textMuted),
                     SizedBox(width: 10),
-                    Text('网关集群秒级切换', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'workspace',
-                height: 38,
-                child: Row(
-                  children: [
-                    Icon(Icons.terminal_rounded, size: 16, color: HermesTheme.primaryLight),
-                    SizedBox(width: 10),
-                    Text('Agent 特工工作台', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'update',
-                height: 38,
-                child: Row(
-                  children: [
-                    Icon(Icons.system_update_alt_rounded, size: 16, color: HermesTheme.cyan),
-                    SizedBox(width: 10),
-                    Text('检查 App 固件更新', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                    Text('系统设置与控制中枢',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: HermesTheme.textMain)),
                   ],
                 ),
               ),
