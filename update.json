@@ -1,7 +1,7 @@
 {
-  "version": "1.4.1",
-  "buildNumber": 10,
+  "version": "1.4.3",
+  "buildNumber": 12,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "a4ef1a043405ba2dc59098c1396e2a2834f261f4e81e19a731e5a68fcec8df52",
+  "sha256": "fb2bd06f086385abe754c13194dcb436d328e1d0ce7ceb8b545121f73f0acdb6",
   "notes": "1. 统一系统设置与控制中枢 (System Settings)：整合网关集群中枢、特工调度、桌面交互偏好、PIN安全锁与运维缓存清理。\n2. 会话抽屉与菜单结构精简：底部常驻系统设置入口，告别零散菜单。\n3. 固件在线更新全面搭载防边缘缓存动态穿透与多镜像竞速机制。"
 }
