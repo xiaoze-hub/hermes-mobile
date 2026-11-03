@@ -80,6 +80,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _storage.getTabStripEnabled().then((v) {
       if (mounted) setState(() => _tabStripEnabled = v);
     });
+    _checkNotificationPermissionOnStart();
+  }
+
+  Future<void> _checkNotificationPermissionOnStart() async {
+    try {
+      final enabled = await _storage.getNotificationsEnabled();
+      if (enabled) {
+        await const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<void>('requestNotificationPermission');
+      }
+    } catch (_) {}
   }
 
   @override
@@ -711,22 +722,58 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ==========================================
-  void _notifyTaskCompleted() {
+  void _notifyTaskCompleted([String? summary]) async {
     try {
-      const MethodChannel('com.hermes.mobile/files')
-          .invokeMethod<void>('vibrate', {'durationMs': 80});
+      final haptic = await _storage.getHapticFeedbackEnabled();
+      if (haptic) {
+        const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<void>('vibrate', {'durationMs': 120});
+      }
+
+      final notify = await _storage.getNotificationsEnabled();
+      if (notify) {
+        final sessionTitle = _activeSession?.title ?? 'Hermes 特工';
+        final contentText = (summary != null && summary.trim().isNotEmpty)
+            ? summary.trim()
+            : '后台指令与任务已全部执行完毕。';
+        const MethodChannel('com.hermes.mobile/files').invokeMethod<void>('showNotification', {
+          'title': '✅ $sessionTitle · 任务执行完成',
+          'content': contentText,
+          'id': DateTime.now().millisecondsSinceEpoch % 100000 + 1000,
+        });
+      }
     } catch (_) {}
   }
 
-  void _notifyApprovalRequired(String command) {
+  String _extractSummary(String content) {
+    if (content.trim().isEmpty) return '后台指令与协同任务已全部执行完毕。';
+    final clean = content
+        .replaceAll(RegExp(r'[#*`_~>]'), '')
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join(' ');
+    if (clean.length > 150) {
+      return '${clean.substring(0, 147)}...';
+    }
+    return clean.isEmpty ? '后台指令与协同任务已全部执行完毕。' : clean;
+  }
+
+  void _notifyApprovalRequired(String command) async {
     try {
-      const MethodChannel('com.hermes.mobile/files')
-          .invokeMethod<void>('vibrate', {'durationMs': 200});
-      const MethodChannel('com.hermes.mobile/files').invokeMethod<void>('showNotification', {
-        'title': 'Hermes 正在请求特权执行确认',
-        'content': command,
-        'id': 2001,
-      });
+      final haptic = await _storage.getHapticFeedbackEnabled();
+      if (haptic) {
+        const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<void>('vibrate', {'durationMs': 200});
+      }
+      final notify = await _storage.getNotificationsEnabled();
+      if (notify) {
+        const MethodChannel('com.hermes.mobile/files').invokeMethod<void>('showNotification', {
+          'title': '⚠️ Hermes 正在请求特权执行确认',
+          'content': command,
+          'id': 2001,
+        });
+      }
     } catch (_) {}
   }
 
@@ -844,6 +891,7 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _activeTasks.removeWhere((t) => t.id == 'subagent_$agentName');
         });
+        _notifyTaskCompleted('子智能体 [$agentName] 协同任务已顺利完成。');
       }
       return;
     }
@@ -866,7 +914,19 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _activeTasks.removeWhere((t) => t.id == 'cron_$jobName');
         });
+        _notifyTaskCompleted('定时任务 [$jobName] 执行完毕。');
       }
+      return;
+    }
+
+    // 5. 处理后台独立任务与进程完成事件
+    if (type == 'task.completed' || type == 'background.completed' || type == 'process.completed') {
+      final taskName = (event['name'] ?? event['task_id'] ?? event['command'] ?? '后台任务').toString();
+      final resultSummary = (event['output'] ?? event['result'] ?? '已执行完成').toString();
+      setState(() {
+        _activeTasks.removeWhere((t) => t.id == event['task_id']?.toString() || t.name == taskName);
+      });
+      _notifyTaskCompleted('[$taskName] ${_extractSummary(resultSummary)}');
       return;
     }
 
@@ -920,7 +980,9 @@ class _ChatScreenState extends State<ChatScreen> {
       } else if (type == 'done' || type == 'message_end') {
         currentAssistant?.isStreaming = false;
         _activeTasks.clear();
-        _notifyTaskCompleted();
+        final rawContent = currentAssistant?.content ?? '';
+        final summary = _extractSummary(rawContent);
+        _notifyTaskCompleted(summary);
       }
     });
 

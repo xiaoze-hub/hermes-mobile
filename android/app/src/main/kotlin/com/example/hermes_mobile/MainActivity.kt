@@ -19,6 +19,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.os.Vibrator
 import android.os.VibrationEffect
+import androidx.core.app.NotificationManagerCompat
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,8 +28,10 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity: FlutterActivity() {
     private val channelName = "com.hermes.mobile/files"
     private val pickFilesRequest = 4701
+    private val notificationPermissionRequest = 4702
     private val speechPermissionRequest = 4703
     private var filePickerResult: MethodChannel.Result? = null
+    private var notificationPermissionResult: MethodChannel.Result? = null
     private var speechResult: MethodChannel.Result? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechServicePackage: String? = null
@@ -37,12 +40,53 @@ class MainActivity: FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
-                                if (call.method == "showNotification") {
+                if (call.method == "showNotification") {
                     val title = call.argument<String>("title") ?: "Hermes Agent"
                     val content = call.argument<String>("content") ?: ""
                     val id = call.argument<Int>("id") ?: 1001
                     showNotification(title, content, id)
                     result.success(true)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "requestNotificationPermission") {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            notificationPermissionResult = result
+                            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), notificationPermissionRequest)
+                            return@setMethodCallHandler
+                        }
+                    }
+                    val manager = NotificationManagerCompat.from(this)
+                    result.success(manager.areNotificationsEnabled())
+                    return@setMethodCallHandler
+                }
+                if (call.method == "areNotificationsEnabled") {
+                    val enabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                    } else {
+                        NotificationManagerCompat.from(this).areNotificationsEnabled()
+                    }
+                    result.success(enabled)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "openNotificationSettings") {
+                    try {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        }
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        try {
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("settings_failed", e.message, null)
+                        }
+                    }
                     return@setMethodCallHandler
                 }
                 if (call.method == "vibrate") {
@@ -161,7 +205,13 @@ class MainActivity: FlutterActivity() {
             }
     }
 
-        private fun showNotification(title: String, content: String, notificationId: Int = 1001) {
+    private fun showNotification(title: String, content: String, notificationId: Int = 1001) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), notificationPermissionRequest)
+                return
+            }
+        }
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
         val channelId = "hermes_tasks_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -172,6 +222,9 @@ class MainActivity: FlutterActivity() {
             ).apply {
                 description = "Hermes 后台任务完成、耗时任务提醒与高危权限确认通知"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 150, 80, 150)
+                setShowBadge(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -184,6 +237,7 @@ class MainActivity: FlutterActivity() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
+        val iconRes = if (applicationInfo.icon != 0) applicationInfo.icon else R.mipmap.ic_launcher
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             android.app.Notification.Builder(this, channelId)
         } else {
@@ -193,8 +247,11 @@ class MainActivity: FlutterActivity() {
         val notification = builder
             .setContentTitle(title)
             .setContentText(content)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setStyle(android.app.Notification.BigTextStyle().bigText(content))
+            .setSmallIcon(iconRes)
             .setAutoCancel(true)
+            .setPriority(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) NotificationManager.IMPORTANCE_HIGH else android.app.Notification.PRIORITY_HIGH)
+            .setDefaults(android.app.Notification.DEFAULT_ALL)
             .setContentIntent(pendingIntent)
             .build()
         notificationManager.notify(notificationId, notification)
@@ -298,11 +355,16 @@ class MainActivity: FlutterActivity() {
     @Deprecated("Deprecated in Android, retained for Flutter permission callback compatibility")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != speechPermissionRequest) return
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            launchSpeechRecognition()
-        } else {
-            finishSpeechWithError("microphone_permission_denied", "需要麦克风权限才能进行语音听写")
+        if (requestCode == speechPermissionRequest) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                launchSpeechRecognition()
+            } else {
+                finishSpeechWithError("microphone_permission_denied", "需要麦克风权限才能进行语音听写")
+            }
+        } else if (requestCode == notificationPermissionRequest) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            notificationPermissionResult?.success(granted)
+            notificationPermissionResult = null
         }
     }
 
@@ -316,24 +378,30 @@ class MainActivity: FlutterActivity() {
             callback.success(emptyList<Map<String, Any>>())
             return
         }
-        try {
-            val uris = mutableListOf<Uri>()
-            data.clipData?.let { clip ->
-                for (index in 0 until clip.itemCount) uris.add(clip.getItemAt(index).uri)
+        Thread {
+            try {
+                val uris = mutableListOf<Uri>()
+                data.clipData?.let { clip ->
+                    for (index in 0 until clip.itemCount) uris.add(clip.getItemAt(index).uri)
+                }
+                data.data?.let { if (!uris.contains(it)) uris.add(it) }
+                val files = uris.map { uri ->
+                    val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                    } ?: "attachment"
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("Unable to read $name")
+                    mapOf("name" to name, "bytes" to bytes)
+                }
+                runOnUiThread {
+                    callback.success(files)
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    callback.error("file_read_failed", error.message, null)
+                }
             }
-            data.data?.let { if (!uris.contains(it)) uris.add(it) }
-            val files = uris.map { uri ->
-                val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
-                } ?: "attachment"
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: throw IllegalStateException("Unable to read $name")
-                mapOf("name" to name, "bytes" to bytes)
-            }
-            callback.success(files)
-        } catch (error: Exception) {
-            callback.error("file_read_failed", error.message, null)
-        }
+        }.start()
     }
 }

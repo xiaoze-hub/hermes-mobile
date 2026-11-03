@@ -100,6 +100,58 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
   Future<void> _toggleNotifications(bool val) async {
     setState(() => _notificationsEnabled = val);
     await _storage.setNotificationsEnabled(val);
+    if (val) {
+      try {
+        final granted = await const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<bool>('requestNotificationPermission');
+        if (granted == false && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('已开启通知开关，若系统未弹出授权窗口，请在系统设置中允许 Hermes 通知'),
+              action: SnackBarAction(
+                label: '去设置',
+                textColor: HermesTheme.accent,
+                onPressed: () {
+                  const MethodChannel('com.hermes.mobile/files')
+                      .invokeMethod('openNotificationSettings');
+                },
+              ),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _sendTestNotification() async {
+    try {
+      await const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<void>('requestNotificationPermission');
+      await const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<void>('vibrate', {'durationMs': 150});
+      await const MethodChannel('com.hermes.mobile/files').invokeMethod<void>('showNotification', {
+        'title': '✅ Hermes 任务通知通道正常',
+        'content': '这是一条测试通知。长耗时脚本、协同特工及命令执行完毕时，将在此处收到即时通知提醒。',
+        'id': 9999,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('已发送测试通知与触觉震动，请查看手机顶部状态栏与通知中心'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('发送测试通知失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _toggleApproval(bool val) async {
@@ -339,6 +391,13 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
                     subtitle: '后台长耗时脚本与命令审批即时拉起 Android 原生状态栏通知',
                     value: _notificationsEnabled,
                     onChanged: _toggleNotifications,
+                  ),
+                  const Divider(color: HermesTheme.borderSubtle, height: 1),
+                  _buildNavTile(
+                    icon: Icons.send_to_mobile_rounded,
+                    title: '测试系统通知与触觉震动',
+                    subtitle: '即时下发一条测试通知，验证状态栏横幅与振动通道是否畅通',
+                    onTap: _sendTestNotification,
                   ),
                 ]),
                 const SizedBox(height: 16),
