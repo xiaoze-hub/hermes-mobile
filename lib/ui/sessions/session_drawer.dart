@@ -815,7 +815,7 @@ class _SessionDrawerState extends State<SessionDrawer> {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => SystemSettingsScreen(
-                        gateway: widget.gatewayService,
+                        gatewayService: widget.gatewayService,
                       ),
                     ),
                   );

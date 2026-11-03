@@ -1165,7 +1165,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => SystemSettingsScreen(
-                      gateway: widget.gatewayService,
+                      gatewayService: widget.gatewayService,
                       onConfigChanged: () {
                         _loadOrRestoreSession();
                         _loadCurrentModel();

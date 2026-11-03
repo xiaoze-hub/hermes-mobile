@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies and build APK
         run: |
           flutter pub get
-          flutter analyze || true
+          flutter analyze
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
       - name: Create update manifest

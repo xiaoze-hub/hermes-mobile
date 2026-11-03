@@ -11,12 +11,12 @@ import 'gateway_management_screen.dart';
 import 'gateway_settings_dialog.dart';
 
 class SystemSettingsScreen extends StatefulWidget {
-  final HermesGatewayService gateway;
+  final HermesGatewayService gatewayService;
   final VoidCallback? onConfigChanged;
 
   const SystemSettingsScreen({
     super.key,
-    required this.gateway,
+    required this.gatewayService,
     this.onConfigChanged,
   });
 
