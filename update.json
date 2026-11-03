@@ -1,0 +1,7 @@
+{
+  "version": "1.2.2",
+  "buildNumber": 7,
+  "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
+  "sha256": "74d9a2f653367c89c4f728303b48401411596455404f7b2c882a0caf58f7f43b",
+  "notes": "1. 升级多源镜像容灾网络，支持 jsDelivr 全球加速及多线路国内镜像。\n2. 修复更新包清单数据类型解析问题，大幅提升下载成功率与速度。"
+}

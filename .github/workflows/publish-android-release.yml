@@ -41,43 +41,9 @@ jobs:
       - name: Install dependencies and build APK
         run: |
           flutter pub get
-          flutter analyze > analyze.log 2>&1 || true
-          cat analyze.log
-          flutter build apk --release > build.log 2>&1 || {
-            echo "## BUILD FAILED" >> $GITHUB_STEP_SUMMARY
-            echo "### Flutter Analyze Log" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat analyze.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "### Flutter Build APK Log" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 100 build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat build.log
-            exit 1
-          }
+          flutter analyze || true
+          flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk hermes-mobile.apk
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            analyze.log
-            build.log
-
-      - name: Dump logs on failure
-        if: failure()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          git checkout -B ci-debug
-          cp analyze.log ci_analyze.log 2>/dev/null || true
-          tail -n 200 build.log > ci_build.log 2>/dev/null || true
-          git add ci_analyze.log ci_build.log
-          git commit -m "ci: debug failure logs [skip ci]" || true
-          git push -f origin ci-debug || true
       - name: Create update manifest
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -97,7 +63,7 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-              "notes": "Hermes Mobile 更新版本"
+              "notes": "1. 升级多源镜像容灾网络，支持 jsDelivr 全球加速及多线路国内镜像。\n2. 修复更新包清单数据类型解析问题，大幅提升下载成功率与速度。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
@@ -106,3 +72,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${{ github.ref_name }}" hermes-mobile.apk update.json --title "Hermes Mobile ${{ github.ref_name }}" --generate-notes
+      - name: Sync update.json to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git fetch origin main
+          git checkout main
+          git pull origin main
+          git add update.json
+          git commit -m "chore(release): sync update.json for ${{ github.ref_name }} [skip ci]" || true
+          git push origin main || true

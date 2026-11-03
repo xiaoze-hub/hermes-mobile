@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -15,17 +16,25 @@ class AppUpdateScreen extends StatefulWidget {
 class _AppUpdateScreenState extends State<AppUpdateScreen> {
   static const _channel = MethodChannel('com.hermes.mobile/files');
 
-  // 多源候选清单：优先官方直连，失败自动切换国内极速镜像容灾
+  // 多源候选清单：优先极速 CDN 与国内容灾镜像，最后回退官方直连
   static const List<String> _manifestEndpoints = [
-    'https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://fastly.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
+    'https://cdn.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
     'https://ghfast.top/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
-    'https://ghproxy.cc/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://gh-proxy.com/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://ghproxy.net/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://gh.ddlc.top/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://raw.githubusercontent.com/xiaoze-hub/hermes-mobile/main/update.json',
+    'https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
   ];
 
   final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 12),
+    connectTimeout: const Duration(seconds: 6),
     receiveTimeout: const Duration(minutes: 5),
-    headers: const {'Accept': 'application/json'},
+    headers: const {
+      'Accept': 'application/json, text/plain, */*',
+      'User-Agent': 'HermesMobileApp/1.0',
+    },
   ));
 
   Map<String, dynamic>? _release;
@@ -42,6 +51,16 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
   void initState() {
     super.initState();
     _checkForUpdate();
+  }
+
+  String _getEndpointLabel(String url, int index) {
+    if (url.contains('jsdelivr.net')) return '全球 CDN 加速';
+    if (url.contains('ghfast.top')) return '镜像源 · Fast';
+    if (url.contains('gh-proxy.com')) return '镜像源 · GHProxy';
+    if (url.contains('ghproxy.net')) return '镜像源 · ProxyNet';
+    if (url.contains('ddlc.top')) return '镜像源 · DDLC';
+    if (url.contains('githubusercontent.com')) return 'GitHub Raw';
+    return 'GitHub 官方源';
   }
 
   Future<void> _checkForUpdate() async {
@@ -67,25 +86,35 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
 
       for (int i = 0; i < _manifestEndpoints.length; i++) {
         final endpoint = _manifestEndpoints[i];
-        final label = i == 0 ? 'GitHub 官方源' : '国内加速镜像 $i';
+        final label = _getEndpointLabel(endpoint, i);
         try {
-          final response = await _dio.get<Map<String, dynamic>>(
+          final response = await _dio.get<dynamic>(
             endpoint,
-            options: Options(responseType: ResponseType.json),
+            options: Options(
+              responseType: ResponseType.plain,
+              sendTimeout: const Duration(seconds: 4),
+              receiveTimeout: const Duration(seconds: 5),
+            ),
           );
-          if (response.data != null && response.data is Map) {
-            manifest = Map<String, dynamic>.from(response.data!);
-            succeededSource = label;
-            break;
+
+          if (response.data != null) {
+            final raw = response.data.toString().trim();
+            if (raw.isNotEmpty && raw.startsWith('{')) {
+              final dynamic parsed = jsonDecode(raw);
+              if (parsed is Map) {
+                manifest = Map<String, dynamic>.from(parsed);
+                succeededSource = label;
+                break;
+              }
+            }
           }
         } catch (e) {
           lastErrMsg = e.toString();
-          // 继续尝试下一个容灾节点
         }
       }
 
       if (manifest == null) {
-        throw StateError('无法从所有候选更新源连接获取版本清单，请检查网络设置。');
+        throw StateError('无法从所有候选更新源连接获取版本清单，请检查网络设置。\n(调试: $lastErrMsg)');
       }
 
       final version = manifest['version']?.toString() ?? '';
@@ -151,9 +180,11 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
 
       final rawApkUrl = release['_apkUrl'].toString();
       final downloadCandidates = [
-        rawApkUrl,
         'https://ghfast.top/$rawApkUrl',
-        'https://ghproxy.cc/$rawApkUrl',
+        'https://gh-proxy.com/$rawApkUrl',
+        'https://ghproxy.net/$rawApkUrl',
+        'https://gh.ddlc.top/$rawApkUrl',
+        rawApkUrl,
       ];
 
       bool downloadSuccess = false;
@@ -165,6 +196,10 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
             candidate,
             path,
             deleteOnError: true,
+            options: Options(
+              sendTimeout: const Duration(seconds: 8),
+              receiveTimeout: const Duration(minutes: 5),
+            ),
             onReceiveProgress: (received, total) {
               if (mounted) {
                 setState(() => _progress = total > 0 ? received / total : null);
@@ -187,7 +222,7 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
       }
 
       if (!downloadSuccess) {
-        throw StateError('安装包校验失败或所有下载镜像均超时，请稍后重试。');
+        throw StateError('安装包校验失败或所有下载镜像均超时：$lastDownloadError');
       }
 
       if (!mounted) return;
@@ -219,14 +254,15 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
           behavior: SnackBarBehavior.floating,
         ));
       }
-    } on PlatformException catch (error) {
-      if (mounted) setState(() => _error = error.message ?? '无法启动系统安装器');
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() => _error = '拉起安装器失败: ${e.message ?? e.code}');
+      }
     }
   }
 
   String _friendlyError(Object error) {
     if (error is DioException) {
-      if (error.response?.statusCode == 404) return '暂时没有发布可用的更新版本。';
       if (error.type == DioExceptionType.connectionTimeout ||
           error.type == DioExceptionType.receiveTimeout) {
         return '连接更新源超时，建议检查网络或切换节点后点右上角重试。';
@@ -258,17 +294,14 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: HermesTheme.border),
               boxShadow: const [
-                BoxShadow(
-                  color: Color(0x22000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
-                ),
+                BoxShadow(color: Color(0x22000000), blurRadius: 10, offset: Offset(0, 4)),
               ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
                       width: 44,
@@ -276,29 +309,28 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                       decoration: BoxDecoration(
                         gradient: HermesTheme.userBubbleGradient,
                         borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [HermesTheme.primaryGlow],
                       ),
-                      child: const Icon(Icons.system_update_alt_rounded, color: Colors.white, size: 22),
+                      child: const Icon(Icons.install_mobile_rounded, color: Colors.white, size: 24),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
                             'Hermes Mobile',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
                           ),
-                          const SizedBox(height: 3),
+                          const SizedBox(height: 4),
                           Text(
                             '当前本地版本: $_currentVersion',
-                            style: const TextStyle(fontSize: 12, color: HermesTheme.textMuted, fontFamily: 'monospace'),
+                            style: const TextStyle(fontSize: 12, color: HermesTheme.textMuted),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      tooltip: '重新探测更新',
+                      tooltip: '重新检查更新',
                       onPressed: _checking || _downloading ? null : _checkForUpdate,
                       icon: _checking
                           ? const SizedBox(
@@ -306,36 +338,30 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.primary),
                             )
-                          : const Icon(Icons.refresh_rounded, size: 20),
+                          : const Icon(Icons.refresh_rounded, size: 20, color: HermesTheme.textMain),
                     ),
                   ],
                 ),
 
-                const SizedBox(height: 14),
-                const Divider(color: HermesTheme.border),
-                const SizedBox(height: 12),
-
-                if (_checking && release == null) ...[
-                  const LinearProgressIndicator(color: HermesTheme.primary, backgroundColor: HermesTheme.surfaceLight),
-                  const SizedBox(height: 8),
-                  const Text('正在探测最新发布镜像与更新清单...', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
-                ] else if (_error != null) ...[
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: HermesTheme.danger.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
+                      color: HermesTheme.danger.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: HermesTheme.danger.withOpacity(0.3)),
                     ),
                     child: Text(
                       _error!,
-                      style: const TextStyle(fontSize: 12, color: Color(0xFFFCA5A5)),
+                      style: const TextStyle(color: HermesTheme.danger, fontSize: 12, height: 1.4),
                     ),
                   ),
                 ],
 
                 if (release != null) ...[
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Container(
@@ -383,7 +409,7 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                     ),
                   ],
 
-                  if (available && !_downloading) ...[
+                  if (!_downloading) ...[
                     const SizedBox(height: 16),
                     if (_apkPath != null)
                       FilledButton.icon(
@@ -396,7 +422,7 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       )
-                    else
+                    else if (available)
                       FilledButton.icon(
                         onPressed: _download,
                         icon: const Icon(Icons.download_rounded, size: 16),
@@ -404,6 +430,18 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                         style: FilledButton.styleFrom(
                           backgroundColor: HermesTheme.primary,
                           minimumSize: const Size.fromHeight(40),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      )
+                    else
+                      OutlinedButton.icon(
+                        onPressed: _download,
+                        icon: const Icon(Icons.download_rounded, size: 16),
+                        label: const Text('重新下载此版本安装包 (覆盖修复)', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(38),
+                          foregroundColor: HermesTheme.textMuted,
+                          side: const BorderSide(color: HermesTheme.borderSubtle),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
@@ -418,23 +456,24 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
             const Text('版本升级说明', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
             const SizedBox(height: 8),
             Container(
+              width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: HermesTheme.surface,
+                color: HermesTheme.surfaceElevated,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: HermesTheme.border),
+                border: Border.all(color: HermesTheme.borderSubtle),
               ),
               child: SelectableText(
-                release['notes'].toString().trim(),
-                style: const TextStyle(color: HermesTheme.textMuted, fontSize: 12.5, height: 1.5),
+                release['notes'].toString(),
+                style: const TextStyle(fontSize: 13, height: 1.5, color: HermesTheme.textMuted),
               ),
             ),
           ],
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           const Text(
-            '说明：下载完成后会自动校验 SHA-256 完整性并拉起 Android 系统安装器。系统若提示“来自未知来源应用”，请允许安装即可覆盖平滑升级。',
-            style: TextStyle(color: HermesTheme.textDim, fontSize: 11, height: 1.5),
+            '说明：在线更新采用多源容灾机制，自动连接最快节点下载 APK，并在本地严格校验 SHA-256 哈希值保证安全。系统拉起安装器若提示“未知应用来源”，请点击允许安装即可平滑升级。',
+            style: TextStyle(color: HermesTheme.textDim, fontSize: 11.5, height: 1.45),
           ),
         ],
       ),
