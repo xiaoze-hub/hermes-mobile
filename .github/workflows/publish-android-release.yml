@@ -63,11 +63,7 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-                            "notes": "1. 全新后台活动任务与协同感知：实时呈现当前窗口后台脚本、子智能体协同、定时任务执行状态与监视浮条。
-2. Git Diff 代码对比卡片与 Linux 终端 ANSI 全彩日志高亮。
-3. 系统级高危命令审批通知与长耗时任务完成触觉震动。
-4. 会话上下文 Token 容量透视盘与一键记忆提炼。
-5. 会话置顶与分类标签管理，支持多网关集群节点一键热切换。"
+              "notes": "1. 全新后台活动任务与协同感知：实时呈现当前窗口后台脚本、子智能体协同、定时任务执行状态与监视浮条。\n2. Git Diff 代码对比卡片与 Linux 终端 ANSI 全彩日志高亮。\n3. 系统级高危命令审批通知与长耗时任务完成触觉震动。\n4. 会话上下文 Token 容量透视盘与一键记忆提炼。\n5. 会话置顶与分类标签管理，支持多网关集群节点一键热切换。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
