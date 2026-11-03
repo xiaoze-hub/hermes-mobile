@@ -1,7 +1,7 @@
 {
-  "version": "1.2.2",
-  "buildNumber": 7,
+  "version": "1.3.0",
+  "buildNumber": 8,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "d170e17ac339281bc503bf29e610412f24a92fd262cc2b8328a7db7fd97e2cd6",
-  "notes": "1. 升级多源镜像容灾网络，支持 jsDelivr 全球加速及多线路国内镜像。\n2. 修复更新包清单数据类型解析问题，大幅提升下载成功率与速度。"
+  "sha256": "817ef6215d3a8c1e48564e149f78e639e885798d6d2cfc1a596d4ab03ad03566",
+  "notes": "1. 全新后台活动任务与协同感知：实时呈现当前窗口后台脚本、子智能体协同、定时任务执行状态与监视浮条。\n2. Git Diff 代码对比卡片与 Linux 终端 ANSI 全彩日志高亮。\n3. 系统级高危命令审批通知与长耗时任务完成触觉震动。\n4. 会话上下文 Token 容量透视盘与一键记忆提炼。\n5. 会话置顶与分类标签管理，支持多网关集群节点一键热切换。"
 }
