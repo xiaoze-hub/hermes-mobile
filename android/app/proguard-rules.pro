@@ -44,3 +44,8 @@
 -dontwarn okio.**
 -dontwarn java.awt.**
 -dontwarn javax.annotation.**
+
+# 9. Flutter Play Store deferred components optional references
+-dontwarn com.google.android.play.core.**
+-dontwarn io.flutter.embedding.engine.deferredcomponents.**
+-dontwarn io.flutter.app.FlutterPlayStoreSplitApplication
