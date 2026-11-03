@@ -169,4 +169,45 @@ class HermesStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('hermes_open_tab_sessions', ids);
   }
+
+  // --- 系统设置偏好 ---
+  Future<bool> getTabStripEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hermes_pref_tab_strip') ?? true;
+  }
+
+  Future<void> setTabStripEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hermes_pref_tab_strip', enabled);
+  }
+
+  Future<bool> getHapticFeedbackEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hermes_pref_haptic') ?? true;
+  }
+
+  Future<void> setHapticFeedbackEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hermes_pref_haptic', enabled);
+  }
+
+  Future<bool> getNotificationsEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hermes_pref_notifications') ?? true;
+  }
+
+  Future<void> setNotificationsEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hermes_pref_notifications', enabled);
+  }
+
+  Future<bool> getHighRiskApprovalEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hermes_pref_high_risk_approval') ?? true;
+  }
+
+  Future<void> setHighRiskApprovalEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hermes_pref_high_risk_approval', enabled);
+  }
 }

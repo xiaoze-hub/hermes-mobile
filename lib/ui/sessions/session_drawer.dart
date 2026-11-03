@@ -5,6 +5,7 @@ import '../../core/theme.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
 import '../settings/app_update_screen.dart';
+import '../settings/system_settings_screen.dart';
 
 class SessionDrawer extends StatefulWidget {
   final HermesGatewayService gatewayService;
@@ -779,25 +780,44 @@ class _SessionDrawerState extends State<SessionDrawer> {
                             ),
             ),
 
-            // 抽屉底部：App 在线更新入口
+            // 抽屉底部：统一系统设置与控制中枢入口
             Container(
               decoration: const BoxDecoration(
+                color: Color(0xFF0F1424),
                 border: Border(top: BorderSide(color: HermesTheme.border)),
               ),
               child: ListTile(
                 dense: true,
                 contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-                leading: const Icon(Icons.system_update_alt_rounded,
-                    size: 18, color: HermesTheme.accent),
-                title: const Text('系统在线更新与版本',
-                    style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: HermesTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: HermesTheme.borderSubtle),
+                  ),
+                  child: const Icon(Icons.settings_rounded,
+                      size: 18, color: HermesTheme.primaryLight),
+                ),
+                title: const Text('系统设置与控制中枢',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: HermesTheme.textMain)),
+                subtitle: const Text('网关集群 · 特工管控 · 固件版本',
+                    style: TextStyle(fontSize: 10.5, color: HermesTheme.textDim)),
                 trailing: const Icon(Icons.chevron_right_rounded,
                     size: 18, color: HermesTheme.textDim),
                 onTap: () {
                   Navigator.of(context).pop();
                   Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AppUpdateScreen()),
+                    MaterialPageRoute(
+                      builder: (_) => SystemSettingsScreen(
+                        gateway: widget.gatewayService,
+                      ),
+                    ),
                   );
                 },
               ),

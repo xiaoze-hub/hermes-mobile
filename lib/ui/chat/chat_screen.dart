@@ -22,6 +22,7 @@ import 'context_meter_chip.dart';
 import 'session_tab_strip.dart';
 import 'workspace_rail_drawer.dart';
 import '../settings/gateway_cluster_dialog.dart';
+import '../settings/system_settings_screen.dart';
 
 
 class ChatScreen extends StatefulWidget {
@@ -40,6 +41,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   HermesSession? _activeSession;
   final List<HermesSession> _openTabs = [];
+  bool _tabStripEnabled = true;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _loadingHistory = false;
   String? _loadHistoryError;
@@ -81,6 +83,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _loadOrRestoreSession();
     _loadCurrentModel();
+    _storage.getTabStripEnabled().then((v) {
+      if (mounted) setState(() => _tabStripEnabled = v);
+    });
   }
 
   @override
@@ -1156,7 +1161,22 @@ class _ChatScreenState extends State<ChatScreen> {
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'cluster') {
+              if (val == 'system_settings') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SystemSettingsScreen(
+                      gateway: widget.gatewayService,
+                      onConfigChanged: () {
+                        _loadOrRestoreSession();
+                        _loadCurrentModel();
+                        _storage.getTabStripEnabled().then((v) {
+                          if (mounted) setState(() => _tabStripEnabled = v);
+                        });
+                      },
+                    ),
+                  ),
+                );
+              } else if (val == 'cluster') {
                 showDialog(
                   context: context,
                   builder: (ctx) => GatewayClusterDialog(
@@ -1176,25 +1196,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 );
-              } else if (val == 'gateway') {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => GatewayManagementScreen(gateway: widget.gatewayService),
-                  ),
-                );
-              } else if (val == 'settings') {
-                showDialog(
-                  context: context,
-                  builder: (ctx) => GatewaySettingsDialog(
-                    gatewayService: widget.gatewayService,
-                    onSaved: () {
-                      if (_activeSession != null) {
-                        widget.gatewayService.connectWebSocket(_activeSession!.id);
-                        _loadSessionHistory(_activeSession!.id);
-                      }
-                    },
-                  ),
-                );
               } else if (val == 'update') {
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const AppUpdateScreen()),
@@ -1203,57 +1204,51 @@ class _ChatScreenState extends State<ChatScreen> {
             },
             itemBuilder: (context) => const [
               PopupMenuItem(
-                value: 'cluster',
+                value: 'system_settings',
                 height: 40,
                 child: Row(
                   children: [
-                    Icon(Icons.hub_rounded, size: 16, color: HermesTheme.primaryLight),
+                    Icon(Icons.settings_rounded, size: 16, color: HermesTheme.primaryLight),
                     SizedBox(width: 10),
-                    Text('网关集群与节点切换', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                    Text('系统设置与控制中枢',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(height: 1),
+              PopupMenuItem(
+                value: 'cluster',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.hub_rounded, size: 16, color: HermesTheme.accent),
+                    SizedBox(width: 10),
+                    Text('网关集群秒级切换', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
                   ],
                 ),
               ),
               PopupMenuItem(
                 value: 'workspace',
-                height: 40,
+                height: 38,
                 child: Row(
                   children: [
-                    Icon(Icons.terminal_rounded, size: 16, color: HermesTheme.accent),
+                    Icon(Icons.terminal_rounded, size: 16, color: HermesTheme.primaryLight),
                     SizedBox(width: 10),
                     Text('Agent 特工工作台', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
                   ],
                 ),
               ),
               PopupMenuItem(
-                value: 'gateway',
-                height: 40,
-                child: Row(
-                  children: [
-                    Icon(Icons.dns_rounded, size: 16, color: HermesTheme.primaryLight),
-                    SizedBox(width: 10),
-                    Text('网关与集群节点', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                height: 40,
-                child: Row(
-                  children: [
-                    Icon(Icons.tune_rounded, size: 16, color: HermesTheme.textMuted),
-                    SizedBox(width: 10),
-                    Text('网关连接设置', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
                 value: 'update',
-                height: 40,
+                height: 38,
                 child: Row(
                   children: [
-                    Icon(Icons.system_update_alt_rounded, size: 16, color: HermesTheme.accent),
+                    Icon(Icons.system_update_alt_rounded, size: 16, color: HermesTheme.cyan),
                     SizedBox(width: 10),
-                    Text('检查 App 在线更新', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                    Text('检查 App 固件更新', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
                   ],
                 ),
               ),
@@ -1261,16 +1256,18 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 4),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(38),
-          child: SessionTabStrip(
-            tabs: _openTabs,
-            activeSessionId: _activeSession?.id ?? '',
-            onSelectTab: _switchSession,
-            onCloseTab: _closeTab,
-            onNewTab: _createNewSession,
-          ),
-        ),
+        bottom: _tabStripEnabled
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(38),
+                child: SessionTabStrip(
+                  tabs: _openTabs,
+                  activeSessionId: _activeSession?.id ?? '',
+                  onSelectTab: _switchSession,
+                  onCloseTab: _closeTab,
+                  onNewTab: _createNewSession,
+                ),
+              )
+            : null,
       ),
       drawer: SessionDrawer(
         gatewayService: widget.gatewayService,

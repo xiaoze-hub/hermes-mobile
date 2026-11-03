@@ -63,7 +63,7 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-              "notes": "1. 桌面级多会话横向标签栏 (Session Tab Strip)：支持多任务会话水平并列与毫秒级即时切换。\n2. 桌面级工作区控制台 (Workspace Rails Drawer)：滑出式终端控制台、工作区文件目录树快速浏览与会话工件/Diff补丁收纳舱。\n3. 桌面级 Slash 命令快捷面板 ([/] Command Palette)：Docker/Top/Git/Cron/Subagent 9大快捷宏指令一键填装。\n4. 后台任务全景活动监视条、上下文透视芯片与多网关集群热切换全面增强。"
+              "notes": "1. 统一系统设置与控制中枢 (System Settings)：整合网关集群中枢、特工调度、桌面交互偏好、PIN安全锁与运维缓存清理。\n2. 会话抽屉与菜单结构精简：底部常驻系统设置入口，告别零散菜单。\n3. 固件在线更新全面搭载防边缘缓存动态穿透与多镜像竞速机制。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
