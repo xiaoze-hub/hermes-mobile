@@ -1,0 +1,8 @@
+Analyzing hermes-mobile...                                      
+
+  error • The getter 'isUser' isn't defined for the type 'ChatMessage' • lib/ui/chat/chat_screen.dart:534:24 • undefined_getter
+  error • The getter 'output' isn't defined for the type 'ToolCallInfo' • lib/ui/chat/chat_screen.dart:546:18 • undefined_getter
+  error • The getter 'output' isn't defined for the type 'ToolCallInfo' • lib/ui/chat/chat_screen.dart:546:39 • undefined_getter
+  error • The getter 'output' isn't defined for the type 'ToolCallInfo' • lib/ui/chat/chat_screen.dart:549:35 • undefined_getter
+
+4 issues found. (ran in 9.7s)
