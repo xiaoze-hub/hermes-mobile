@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme.dart';
 import '../../models/chat_message.dart';
+import 'ansi_terminal_view.dart';
+import 'diff_card_view.dart';
 
 class ToolCard extends StatefulWidget {
   final ToolCallInfo toolCall;
@@ -28,35 +30,32 @@ class _ToolCardState extends State<ToolCard> {
     }
   }
 
-  IconData _getToolIcon(String name) {
-    final lower = name.toLowerCase();
-    if (lower.contains('bash') || lower.contains('shell') || lower.contains('exec') || lower.contains('cmd')) {
-      return Icons.terminal_rounded;
-    } else if (lower.contains('python') || lower.contains('code')) {
-      return Icons.code_rounded;
-    } else if (lower.contains('search') || lower.contains('web')) {
-      return Icons.travel_explore_rounded;
-    } else if (lower.contains('file') || lower.contains('read') || lower.contains('write')) {
-      return Icons.folder_open_rounded;
+  (IconData, Color, String) _getCategoryMeta(ToolCategory category) {
+    switch (category) {
+      case ToolCategory.subagent:
+        return (Icons.smart_toy_rounded, const Color(0xFFC084FC), 'SUBAGENT');
+      case ToolCategory.cron:
+        return (Icons.schedule_rounded, const Color(0xFFFBBF24), 'CRON');
+      case ToolCategory.daemon:
+        return (Icons.memory_rounded, const Color(0xFF38BDF8), 'DAEMON');
+      case ToolCategory.bash:
+        return (Icons.terminal_rounded, HermesTheme.accent, 'BASH');
+      case ToolCategory.python:
+        return (Icons.code_rounded, HermesTheme.primaryLight, 'PYTHON');
+      case ToolCategory.web:
+        return (Icons.travel_explore_rounded, HermesTheme.primaryLight, 'WEB');
+      case ToolCategory.io:
+        return (Icons.folder_open_rounded, HermesTheme.accent, 'IO');
+      case ToolCategory.system:
+        return (Icons.settings_suggest_rounded, HermesTheme.textMuted, 'SYSTEM');
     }
-    return Icons.settings_suggest_rounded;
-  }
-
-  String _formatCategory(String name) {
-    final lower = name.toLowerCase();
-    if (lower.contains('bash') || lower.contains('shell')) return 'BASH';
-    if (lower.contains('python')) return 'PYTHON';
-    if (lower.contains('search')) return 'WEB';
-    if (lower.contains('file')) return 'IO';
-    return 'SYSTEM';
   }
 
   @override
   Widget build(BuildContext context) {
     final tool = widget.toolCall;
     final isRunning = tool.isRunning;
-    final category = _formatCategory(tool.name);
-    final icon = _getToolIcon(tool.name);
+    final (icon, accentColor, categoryTag) = _getCategoryMeta(tool.category);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -64,48 +63,66 @@ class _ToolCardState extends State<ToolCard> {
         color: HermesTheme.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isRunning ? HermesTheme.warning.withOpacity(0.4) : HermesTheme.border,
+          color: isRunning
+              ? accentColor.withOpacity(0.5)
+              : HermesTheme.border,
           width: 1,
         ),
+        boxShadow: isRunning
+            ? [
+                BoxShadow(
+                  color: accentColor.withOpacity(0.08),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                )
+              ]
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 终端顶栏：工具名与状态指示
+          // 终端顶栏：工具名、分类徽标与状态指示
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             borderRadius: BorderRadius.circular(12),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: const BoxDecoration(
-                color: Color(0xFF141A2B), // 微对比度中控顶栏
+                color: Color(0xFF141A2B),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(11)),
               ),
               child: Row(
                 children: [
-                  Icon(icon, size: 14, color: isRunning ? HermesTheme.warning : HermesTheme.accent),
+                  Icon(icon, size: 14, color: accentColor),
                   const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 1.5),
                     decoration: BoxDecoration(
-                      color: HermesTheme.primary.withOpacity(0.18),
+                      color: accentColor.withOpacity(0.18),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: HermesTheme.primary.withOpacity(0.3), width: 0.6),
+                      border: Border.all(
+                          color: accentColor.withOpacity(0.3), width: 0.6),
                     ),
                     child: Text(
-                      category,
-                      style: const TextStyle(
+                      categoryTag,
+                      style: TextStyle(
                         fontSize: 9,
                         fontFamily: 'monospace',
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFFA5B4FC),
+                        color: accentColor,
                       ),
                     ),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      tool.name,
+                      tool.category == ToolCategory.subagent
+                          ? '子智能体: ${tool.subagentRole}'
+                          : (tool.category == ToolCategory.cron &&
+                                  tool.cronSchedule.isNotEmpty
+                              ? '定时任务: ${tool.cronSchedule}'
+                              : tool.name),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -118,27 +135,36 @@ class _ToolCardState extends State<ToolCard> {
                   ),
                   if (isRunning) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: HermesTheme.warning.withOpacity(0.12),
+                        color: accentColor.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           SizedBox(
                             width: 10,
                             height: 10,
-                            child: CircularProgressIndicator(strokeWidth: 1.5, color: HermesTheme.warning),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.5, color: accentColor),
                           ),
-                          SizedBox(width: 4),
-                          Text('执行中', style: TextStyle(fontSize: 10, color: HermesTheme.warning)),
+                          const SizedBox(width: 4),
+                          Text(
+                            tool.category == ToolCategory.daemon
+                                ? '后台运行中'
+                                : '执行中',
+                            style: TextStyle(
+                                fontSize: 10, color: accentColor),
+                          ),
                         ],
                       ),
                     ),
                   ] else ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: HermesTheme.accent.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(6),
@@ -146,9 +172,12 @@ class _ToolCardState extends State<ToolCard> {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.check_rounded, size: 11, color: HermesTheme.accent),
+                          Icon(Icons.check_rounded,
+                              size: 11, color: HermesTheme.accent),
                           SizedBox(width: 3),
-                          Text('已就绪', style: TextStyle(fontSize: 10, color: HermesTheme.accent)),
+                          Text('已就绪',
+                              style: TextStyle(
+                                  fontSize: 10, color: HermesTheme.accent)),
                         ],
                       ),
                     ),
@@ -157,26 +186,32 @@ class _ToolCardState extends State<ToolCard> {
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0.0,
                     duration: const Duration(milliseconds: 180),
-                    child: const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: HermesTheme.textDim),
+                    child: const Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 16, color: HermesTheme.textDim),
                   ),
                 ],
               ),
             ),
           ),
 
-          // 核心内容区：指令入参
+          // 核心内容区：指令入参与输出
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 入参栏
                 if (tool.arguments.isNotEmpty) ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'COMMAND / PARAMS',
-                        style: TextStyle(
+                      Text(
+                        tool.category == ToolCategory.subagent
+                            ? 'SUBAGENT INSTRUCTION'
+                            : (tool.category == ToolCategory.cron
+                                ? 'SCHEDULE CONFIG'
+                                : 'COMMAND / PARAMS'),
+                        style: const TextStyle(
                           fontSize: 9,
                           fontFamily: 'monospace',
                           letterSpacing: 0.8,
@@ -185,7 +220,8 @@ class _ToolCardState extends State<ToolCard> {
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.copy_rounded, size: 12, color: HermesTheme.textDim),
+                        icon: const Icon(Icons.copy_rounded,
+                            size: 12, color: HermesTheme.textDim),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                         tooltip: '复制入参指令',
@@ -198,31 +234,37 @@ class _ToolCardState extends State<ToolCard> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF090B12),
+                      color: const Color(0xFF090D16),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: HermesTheme.border),
+                      border: Border.all(color: HermesTheme.borderSubtle),
                     ),
                     child: SelectableText(
-                      tool.arguments,
+                      tool.category == ToolCategory.subagent
+                          ? tool.subagentPrompt
+                          : tool.arguments,
                       style: const TextStyle(
-                        fontSize: 11,
                         fontFamily: 'monospace',
-                        color: Color(0xFF38BDF8), // Sky 400
+                        fontSize: 11,
+                        color: HermesTheme.textMain,
                         height: 1.4,
                       ),
                     ),
                   ),
                 ],
 
-                // 折叠输出部分 (Output)
-                if (tool.result != null && _expanded) ...[
+                // Diff 代码补丁展示 或 执行输出日志
+                if (tool.result != null && tool.result!.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'STDOUT / EXECUTION OUTPUT',
-                        style: TextStyle(
+                      Text(
+                        tool.isDiff
+                            ? 'GIT DIFF PATCH'
+                            : (tool.category == ToolCategory.subagent
+                                ? 'SUBAGENT REPORT'
+                                : 'OUTPUT / RESULT'),
+                        style: const TextStyle(
                           fontSize: 9,
                           fontFamily: 'monospace',
                           letterSpacing: 0.8,
@@ -230,37 +272,45 @@ class _ToolCardState extends State<ToolCard> {
                           color: HermesTheme.textDim,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.copy_rounded, size: 12, color: HermesTheme.textDim),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        tooltip: '复制执行结果',
-                        onPressed: () => _copyText(tool.result!, '执行结果'),
+                      Row(
+                        children: [
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(40, 20),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: () =>
+                                setState(() => _expanded = !_expanded),
+                            child: Text(
+                              _expanded ? '折叠' : '展开完整日志',
+                              style: const TextStyle(
+                                  fontSize: 10,
+                                  color: HermesTheme.primaryLight),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.copy_rounded,
+                                size: 12, color: HermesTheme.textDim),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            tooltip: '复制输出结果',
+                            onPressed: () =>
+                                _copyText(tool.result!, '执行结果'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    constraints: const BoxConstraints(maxHeight: 220),
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF07090F),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: HermesTheme.border),
+                  if (tool.isDiff)
+                    DiffCardView(diffText: tool.result!)
+                  else
+                    AnsiTerminalView(
+                      text: tool.result!,
+                      maxLines: _expanded ? null : 6,
                     ),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        tool.result!.isEmpty ? '(无终端输出内容)' : tool.result!,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                          color: Color(0xFF4ADE80), // Terminal green
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ),
                 ],
               ],
             ),

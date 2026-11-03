@@ -17,6 +17,10 @@ import '../settings/app_update_screen.dart';
 import 'chat_input_bar.dart';
 import 'thinking_bubble.dart';
 import 'tool_card.dart';
+import 'active_tasks_banner.dart';
+import 'context_meter_chip.dart';
+import '../settings/gateway_cluster_dialog.dart';
+
 
 class ChatScreen extends StatefulWidget {
   final HermesGatewayService gatewayService;
@@ -43,6 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _currentModel = '';
   final List<Map<String, dynamic>> _approvals = [];
   final Set<String> _receivedApprovalIds = {};
+  final List<InflightTaskInfo> _activeTasks = [];
 
   final Set<String> _loadedDrafts = {};
   final Map<String, String> _drafts = {};
@@ -484,6 +489,25 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ==========================================
+  void _notifyTaskCompleted() {
+    try {
+      const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<void>('vibrate', {'durationMs': 80});
+    } catch (_) {}
+  }
+
+  void _notifyApprovalRequired(String command) {
+    try {
+      const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<void>('vibrate', {'durationMs': 200});
+      const MethodChannel('com.hermes.mobile/files').invokeMethod<void>('showNotification', {
+        'title': 'Hermes 正在请求特权执行确认',
+        'content': command,
+        'id': 2001,
+      });
+    } catch (_) {}
+  }
+
   // 特工指令流式与权限审批
   // ==========================================
   Future<void> _loadPendingApprovals() async {
@@ -532,14 +556,94 @@ class _ChatScreenState extends State<ChatScreen> {
     final type = event['type']?.toString();
     if (!mounted) return;
 
-    // 处理安全审批流式通知
+    // 1. 处理恢复快照 (后台任务运行感知)
+    if (type == 'resume_snapshot') {
+      final inflight = event['inflight'];
+      if (inflight is Map) {
+        final taskName = (inflight['name'] ?? inflight['tool'] ?? inflight['task'] ?? '后台运行任务').toString();
+        final detail = (inflight['command'] ?? inflight['prompt'] ?? inflight['detail'] ?? '').toString();
+        final lower = taskName.toLowerCase() + detail.toLowerCase();
+        ToolCategory cat = ToolCategory.system;
+        if (lower.contains('subagent') || lower.contains('delegate')) {
+          cat = ToolCategory.subagent;
+        } else if (lower.contains('cron') || lower.contains('schedule')) {
+          cat = ToolCategory.cron;
+        } else if (lower.contains('nohup') || lower.contains('&') || lower.contains('daemon')) {
+          cat = ToolCategory.daemon;
+        }
+
+        setState(() {
+          _activeTasks.clear();
+          _activeTasks.add(InflightTaskInfo(
+            id: inflight['task_id']?.toString() ?? 'resumed_task',
+            name: taskName,
+            category: cat,
+            detail: detail,
+          ));
+
+          // 若历史记录未挂起流式占位，新增占位以便增量流式呈现
+          if (_messages.isEmpty || !_messages.last.isStreaming) {
+            _messages.add(ChatMessage.assistant(isStreaming: true));
+          }
+        });
+      }
+      return;
+    }
+
+    // 2. 处理安全审批流式通知与震动提示
     if (type == 'approval.requested') {
       _loadPendingApprovals();
+      final cmd = (event['command'] ?? event['description'] ?? 'Hermes 特权命令').toString();
+      _notifyApprovalRequired(cmd);
       return;
     } else if (type == 'approval.resolved') {
       final reqId = event['request_id']?.toString();
       if (reqId != null) {
         setState(() => _approvals.removeWhere((a) => a['request_id']?.toString() == reqId));
+      }
+      return;
+    }
+
+    // 3. 处理子智能体独立流式事件
+    if (type != null && type.startsWith('subagent.')) {
+      final agentName = (event['agent'] ?? event['name'] ?? '子智能体').toString();
+      final content = (event['content'] ?? event['text'] ?? '').toString();
+      if (type == 'subagent.start') {
+        setState(() {
+          _activeTasks.removeWhere((t) => t.id == 'subagent_$agentName');
+          _activeTasks.add(InflightTaskInfo(
+            id: 'subagent_$agentName',
+            name: agentName,
+            category: ToolCategory.subagent,
+            detail: content,
+          ));
+        });
+      } else if (type == 'subagent.complete') {
+        setState(() {
+          _activeTasks.removeWhere((t) => t.id == 'subagent_$agentName');
+        });
+      }
+      return;
+    }
+
+    // 4. 处理定时任务触发事件
+    if (type != null && (type.startsWith('cron.') || type.startsWith('job.'))) {
+      final jobName = (event['name'] ?? event['job_id'] ?? '定时任务').toString();
+      final detail = (event['prompt'] ?? event['schedule'] ?? '').toString();
+      if (type.contains('trigger') || type.contains('start')) {
+        setState(() {
+          _activeTasks.removeWhere((t) => t.id == 'cron_$jobName');
+          _activeTasks.add(InflightTaskInfo(
+            id: 'cron_$jobName',
+            name: jobName,
+            category: ToolCategory.cron,
+            detail: detail,
+          ));
+        });
+      } else if (type.contains('complete') || type.contains('finish')) {
+        setState(() {
+          _activeTasks.removeWhere((t) => t.id == 'cron_$jobName');
+        });
       }
       return;
     }
@@ -560,12 +664,26 @@ class _ChatScreenState extends State<ChatScreen> {
         final toolName = event['tool_name']?.toString() ?? '系统工具';
         final toolId = event['tool_id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString();
         final args = event['arguments']?.toString() ?? '';
-        currentAssistant?.toolCalls.add(ToolCallInfo(
+        final toolInfo = ToolCallInfo(
           id: toolId,
           name: toolName,
           arguments: args,
           isRunning: true,
-        ));
+        );
+        currentAssistant?.toolCalls.add(toolInfo);
+
+        if (toolInfo.category == ToolCategory.daemon ||
+            toolInfo.category == ToolCategory.subagent ||
+            toolInfo.category == ToolCategory.cron ||
+            args.contains('&')) {
+          _activeTasks.removeWhere((t) => t.id == toolId);
+          _activeTasks.add(InflightTaskInfo(
+            id: toolId,
+            name: toolName,
+            category: toolInfo.category,
+            detail: toolInfo.arguments,
+          ));
+        }
       } else if (type == 'tool_end') {
         final toolId = event['tool_id']?.toString();
         final result = event['result']?.toString() ?? '';
@@ -576,8 +694,11 @@ class _ChatScreenState extends State<ChatScreen> {
             isRunning: false,
           );
         }
+        _activeTasks.removeWhere((t) => t.id == toolId);
       } else if (type == 'done' || type == 'message_end') {
         currentAssistant?.isStreaming = false;
+        _activeTasks.clear();
+        _notifyTaskCompleted();
       }
     });
 
@@ -933,6 +1054,14 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // 上下文容量透视芯片
+          ContextMeterChip(
+            gateway: widget.gatewayService,
+            sessionId: _activeSession?.id ?? '',
+            onSendCompactionPrompt: (p) => _sendMessageWithAttachments(p, const []),
+          ),
+          const SizedBox(width: 4),
+
           // 模型快速切换 Pill
           TextButton.icon(
             onPressed: _showModelPicker,
@@ -967,7 +1096,18 @@ class _ChatScreenState extends State<ChatScreen> {
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'workspace') {
+              if (val == 'cluster') {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => GatewayClusterDialog(
+                    gatewayService: widget.gatewayService,
+                    onSwitched: () {
+                      _loadOrRestoreSession();
+                      _loadCurrentModel();
+                    },
+                  ),
+                );
+              } else if (val == 'workspace') {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => AgentWorkspaceScreen(
@@ -1002,6 +1142,17 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'cluster',
+                height: 40,
+                child: Row(
+                  children: [
+                    Icon(Icons.hub_rounded, size: 16, color: HermesTheme.primaryLight),
+                    SizedBox(width: 10),
+                    Text('网关集群与节点切换', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'workspace',
                 height: 40,
@@ -1367,6 +1518,20 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
           ),
+
+          // 当前窗口后台任务 / 子智能体 / 定时任务活动监视条
+          if (_activeTasks.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: _approvals.isNotEmpty ? 130 : 0,
+              child: SafeArea(
+                child: ActiveTasksBanner(
+                  tasks: _activeTasks,
+                  onStopAll: _stopGeneration,
+                ),
+              ),
+            ),
 
           // 待审批操作浮层 (若有审批请求则置顶展示)
           if (_approvals.isNotEmpty)

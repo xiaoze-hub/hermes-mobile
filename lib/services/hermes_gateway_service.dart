@@ -455,6 +455,8 @@ class HermesGatewayService {
               if (result['running'] == true && result['inflight'] is Map) {
                 _streamEventController.add({
                   'type': 'resume_snapshot',
+                  'session_id': _resumingSessionId,
+                  'running': true,
                   'inflight': result['inflight']
                 });
               }
@@ -470,8 +472,12 @@ class HermesGatewayService {
           final result = Map<String, dynamic>.from(frame['result'] as Map);
           _captureRuntimeSessionId(_resumingSessionId, result);
           if (result['running'] == true && result['inflight'] is Map) {
-            _streamEventController.add(
-                {'type': 'resume_snapshot', 'inflight': result['inflight']});
+            _streamEventController.add({
+              'type': 'resume_snapshot',
+              'session_id': _resumingSessionId,
+              'running': true,
+              'inflight': result['inflight']
+            });
           }
         }
         return;
@@ -499,7 +505,13 @@ class HermesGatewayService {
           ? Map<String, dynamic>.from(event['payload'] as Map)
           : <String, dynamic>{};
       final mapped = <String, dynamic>{};
-      if (type is String && type.startsWith('approval.')) {
+      if (type is String &&
+          (type.startsWith('approval.') ||
+              type.startsWith('task.') ||
+              type.startsWith('subagent.') ||
+              type.startsWith('cron.') ||
+              type.startsWith('job.') ||
+              type.startsWith('background.'))) {
         _streamEventController.add({
           'type': type,
           ...event,
@@ -557,7 +569,16 @@ class HermesGatewayService {
           });
           break;
       }
-      if (mapped.isNotEmpty) _streamEventController.add(mapped);
+      if (mapped.isNotEmpty) {
+        _streamEventController.add(mapped);
+      } else {
+        _streamEventController.add({
+          'type': type,
+          ...event,
+          if (event['payload'] is Map)
+            ...Map<String, dynamic>.from(event['payload'] as Map),
+        });
+      }
       return;
     }
     _streamEventController.add(frame);

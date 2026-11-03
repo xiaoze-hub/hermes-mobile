@@ -13,6 +13,13 @@ import android.speech.RecognizerIntent
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.os.Vibrator
+import android.os.VibrationEffect
+
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -30,6 +37,20 @@ class MainActivity: FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
+                                if (call.method == "showNotification") {
+                    val title = call.argument<String>("title") ?: "Hermes Agent"
+                    val content = call.argument<String>("content") ?: ""
+                    val id = call.argument<Int>("id") ?: 1001
+                    showNotification(title, content, id)
+                    result.success(true)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "vibrate") {
+                    val ms = call.argument<Number>("durationMs")?.toLong() ?: 80L
+                    triggerVibration(ms)
+                    result.success(true)
+                    return@setMethodCallHandler
+                }
                 if (call.method == "recognizeSpeech") {
                     if (speechResult != null) {
                         result.error("recognizer_busy", "Speech recognizer is already open", null)
@@ -138,6 +159,55 @@ class MainActivity: FlutterActivity() {
                 }
                 startActivityForResult(intent, pickFilesRequest)
             }
+    }
+
+        private fun showNotification(title: String, content: String, notificationId: Int = 1001) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val channelId = "hermes_tasks_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Hermes 特工任务与权限提醒",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Hermes 后台任务完成、耗时任务提醒与高危权限确认通知"
+                enableVibration(true)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(this, channelId)
+        } else {
+            @Suppress("DEPRECATION")
+            android.app.Notification.Builder(this)
+        }
+        val notification = builder
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        notificationManager.notify(notificationId, notification)
+    }
+
+    private fun triggerVibration(durationMs: Long = 80L) {
+        val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator?.vibrate(durationMs)
+        }
     }
 
     private fun launchSpeechRecognition() {

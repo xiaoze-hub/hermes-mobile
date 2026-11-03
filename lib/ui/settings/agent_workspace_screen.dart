@@ -28,6 +28,22 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
 
   Future<dynamic> _rpc(String method, Map<String, dynamic> params) => widget.gateway.callRpc(method, params);
 
+  Future<dynamic> _fetchCronJobs() async {
+    try {
+      final res = await _rpc('cron.manage', {'action': 'list'});
+      if (res is Map || res is List) return res;
+    } catch (_) {}
+    try {
+      final res = await _rpc('cronjob_manage', {'action': 'list'});
+      if (res is Map || res is List) return res;
+    } catch (_) {}
+    try {
+      final res = await _rpc('cron.list', {});
+      if (res is Map || res is List) return res;
+    } catch (_) {}
+    return {'jobs': []};
+  }
+
   Future<void> _refresh() async {
     if (!widget.gateway.supportsJsonRpc || widget.sessionId.isEmpty) {
       setState(() => _error = '当前会话未连接到支持 JSON-RPC 的 Hermes 网关。请升级网关并重新连接后使用 Agent 管理功能。');
@@ -36,14 +52,24 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
     setState(() { _busy = true; _error = null; });
     final results = await Future.wait([
       _rpc('tools.list', {'session_id': widget.sessionId}),
-      _rpc('cron.manage', {'action': 'list'}),
+      _fetchCronJobs(),
       _rpc('session.context_breakdown', {'session_id': widget.sessionId}),
       _rpc('skills.manage', {'action': 'list'}),
     ].map((future) async { try { return await future; } catch (e) { return {'_error': e.toString()}; } }));
     if (!mounted) return;
     setState(() {
       final tools = results[0]; _toolsets = tools is Map && tools['toolsets'] is List ? List<Map<String, dynamic>>.from((tools['toolsets'] as List).whereType<Map>()) : [];
-      final cron = results[1]; _jobs = cron is Map && cron['jobs'] is List ? List<Map<String, dynamic>>.from((cron['jobs'] as List).whereType<Map>()) : [];
+      final cron = results[1];
+      List<Map<String, dynamic>> extractedJobs = [];
+      if (cron is List) {
+        extractedJobs = List<Map<String, dynamic>>.from(cron.whereType<Map>());
+      } else if (cron is Map) {
+        final list = cron['jobs'] ?? cron['cron_jobs'] ?? cron['tasks'] ?? cron['data'];
+        if (list is List) {
+          extractedJobs = List<Map<String, dynamic>>.from(list.whereType<Map>());
+        }
+      }
+      _jobs = extractedJobs;
       _context = results[2] is Map ? Map<String, dynamic>.from(results[2] as Map) : {};
       _skills = results[3] is Map ? Map<String, dynamic>.from(results[3] as Map) : {};
       final errors = results.whereType<Map>().map((r) => r['_error']).whereType<String>().toList();

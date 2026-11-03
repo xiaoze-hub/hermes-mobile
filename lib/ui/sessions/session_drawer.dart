@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/storage.dart';
 import '../../core/theme.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
@@ -26,6 +27,7 @@ class SessionDrawer extends StatefulWidget {
 }
 
 class _SessionDrawerState extends State<SessionDrawer> {
+  final HermesStorage _storage = HermesStorage();
   List<HermesSession> _sessions = [];
   bool _loading = false;
   String _query = '';
@@ -35,13 +37,31 @@ class _SessionDrawerState extends State<SessionDrawer> {
   Timer? _searchDebounce;
   int _searchRequest = 0;
 
+  Set<String> _pinnedIds = {};
+  Map<String, List<String>> _sessionTags = {};
+  String _selectedTag = '全部';
+  final List<String> _commonTags = ['全部', '运维', '代码', '研究', '日常'];
+
   List<HermesSession> get _matchingSessions {
     final results = _searchResults;
-    if (_query.length >= 2 && results != null) return results;
-    final normalizedQuery = _query.toLowerCase();
-    return _sessions
-        .where((s) => s.title.toLowerCase().contains(normalizedQuery))
-        .toList();
+    List<HermesSession> list;
+    if (_query.length >= 2 && results != null) {
+      list = results;
+    } else {
+      final normalizedQuery = _query.toLowerCase();
+      list = _sessions
+          .where((s) => s.title.toLowerCase().contains(normalizedQuery))
+          .toList();
+    }
+
+    if (_selectedTag != '全部') {
+      list = list.where((s) {
+        final tags = _sessionTags[s.id] ?? [];
+        return tags.contains(_selectedTag);
+      }).toList();
+    }
+
+    return list;
   }
 
   void _onSearchChanged(String value) {
@@ -76,14 +96,26 @@ class _SessionDrawerState extends State<SessionDrawer> {
 
   List<({String? section, HermesSession? session})> get _visibleRows {
     final filtered = _matchingSessions;
+    final rows = <({String? section, HermesSession? session})>[];
+
+    // 置顶会话优先
+    final pinned = filtered.where((s) => _pinnedIds.contains(s.id)).toList();
+    final unpinned = filtered.where((s) => !_pinnedIds.contains(s.id)).toList();
+
+    if (pinned.isNotEmpty) {
+      rows.add((section: '📌 置顶任务会话', session: null));
+      for (final session in pinned) {
+        rows.add((section: null, session: session));
+      }
+    }
+
     final grouped = <String, List<HermesSession>>{};
-    for (final session in filtered) {
+    for (final session in unpinned) {
       grouped
           .putIfAbsent(_sectionFor(session.updatedAt), () => [])
           .add(session);
     }
 
-    final rows = <({String? section, HermesSession? session})>[];
     for (final entry in grouped.entries) {
       rows.add((section: entry.key, session: null));
       for (final session in entry.value) {
@@ -109,7 +141,74 @@ class _SessionDrawerState extends State<SessionDrawer> {
   @override
   void initState() {
     super.initState();
+    _loadCustomizations();
     _loadSessions();
+  }
+
+  Future<void> _loadCustomizations() async {
+    final pinned = await _storage.getPinnedSessionIds();
+    final tags = await _storage.getAllSessionTags();
+    if (mounted) {
+      setState(() {
+        _pinnedIds = pinned;
+        _sessionTags = tags;
+      });
+    }
+  }
+
+  Future<void> _togglePin(HermesSession session) async {
+    await _storage.togglePinSession(session.id);
+    await _loadCustomizations();
+  }
+
+  Future<void> _manageTags(HermesSession session) async {
+    final current = List<String>.from(_sessionTags[session.id] ?? []);
+    final available = ['运维', '代码', '研究', '日常', '高优'];
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          backgroundColor: HermesTheme.surfaceElevated,
+          title: const Text('管理会话标签',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          content: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: available.map((tag) {
+              final active = current.contains(tag);
+              return FilterChip(
+                label: Text('#$tag'),
+                selected: active,
+                onSelected: (val) {
+                  setModalState(() {
+                    if (val) {
+                      current.add(tag);
+                    } else {
+                      current.remove(tag);
+                    }
+                  });
+                },
+                selectedColor: HermesTheme.primary.withOpacity(0.3),
+                checkmarkColor: HermesTheme.primaryLight,
+              );
+            }).toList(),
+          ),
+          actions: [
+            FilledButton(
+              style:
+                  FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _storage.setSessionTags(session.id, current);
+                await _loadCustomizations();
+              },
+              child: const Text('完成'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -145,7 +244,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
       builder: (dialogContext) => AlertDialog(
         backgroundColor: HermesTheme.surfaceElevated,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('重命名任务会话', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        title: const Text('重命名任务会话',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -163,7 +263,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
             style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
             child: const Text('保存修改'),
           ),
@@ -187,13 +288,15 @@ class _SessionDrawerState extends State<SessionDrawer> {
       setState(() {
         final index = _sessions.indexWhere((s) => s.id == session.id);
         if (index != -1) _sessions[index] = updated;
-        final searchIdx = _searchResults?.indexWhere((s) => s.id == session.id) ?? -1;
+        final searchIdx =
+            _searchResults?.indexWhere((s) => s.id == session.id) ?? -1;
         if (searchIdx != -1) _searchResults![searchIdx] = updated;
       });
       widget.onSessionRenamed?.call(updated);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('重命名失败: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('重命名失败: $e')));
       }
     }
   }
@@ -204,13 +307,16 @@ class _SessionDrawerState extends State<SessionDrawer> {
       builder: (ctx) => AlertDialog(
         backgroundColor: HermesTheme.surfaceElevated,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('删除会话', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        title: const Text('删除会话',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         content: Text(
           '确定要删除会话「${session.title}」吗？云端任务历史记录也将被彻底清空。',
           style: const TextStyle(fontSize: 13, color: HermesTheme.textMuted),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: FilledButton.styleFrom(backgroundColor: HermesTheme.danger),
@@ -230,7 +336,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
         });
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('删除失败: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('删除失败: $e')));
         }
       }
     }
@@ -257,7 +364,8 @@ class _SessionDrawerState extends State<SessionDrawer> {
                       gradient: HermesTheme.userBubbleGradient,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.hub_rounded, color: Colors.white, size: 18),
+                    child: const Icon(Icons.hub_rounded,
+                        color: Colors.white, size: 18),
                   ),
                   const SizedBox(width: 10),
                   const Column(
@@ -265,7 +373,10 @@ class _SessionDrawerState extends State<SessionDrawer> {
                     children: [
                       Text(
                         "Hermes Control Hub",
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: HermesTheme.textMain),
                       ),
                       Text(
                         "特工中枢 · 历史会话检索",
@@ -279,9 +390,11 @@ class _SessionDrawerState extends State<SessionDrawer> {
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.primary),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: HermesTheme.primary),
                           )
-                        : const Icon(Icons.refresh_rounded, size: 18, color: HermesTheme.textMuted),
+                        : const Icon(Icons.refresh_rounded,
+                            size: 18, color: HermesTheme.textMuted),
                     tooltip: '刷新会话',
                     onPressed: _loading ? null : _loadSessions,
                   ),
@@ -312,7 +425,10 @@ class _SessionDrawerState extends State<SessionDrawer> {
                       SizedBox(width: 6),
                       Text(
                         "开启全新任务会话",
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white),
                       ),
                     ],
                   ),
@@ -327,49 +443,95 @@ class _SessionDrawerState extends State<SessionDrawer> {
                 onChanged: _onSearchChanged,
                 decoration: InputDecoration(
                   hintText: '搜索历史指令与会话...',
-                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: HermesTheme.textDim),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      size: 18, color: HermesTheme.textDim),
                   suffixIcon: _searching
                       ? const Padding(
                           padding: EdgeInsets.all(12),
                           child: SizedBox(
                             width: 14,
                             height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 1.8, color: HermesTheme.primary),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 1.8, color: HermesTheme.primary),
                           ),
                         )
                       : _query.isNotEmpty
                           ? IconButton(
-                              icon: const Icon(Icons.close_rounded, size: 16, color: HermesTheme.textDim),
+                              icon: const Icon(Icons.close_rounded,
+                                  size: 16, color: HermesTheme.textDim),
                               onPressed: () => _onSearchChanged(''),
                             )
                           : null,
                   filled: true,
                   fillColor: HermesTheme.surfaceLight,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: HermesTheme.borderSubtle),
+                    borderSide:
+                        const BorderSide(color: HermesTheme.borderSubtle),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: HermesTheme.borderSubtle),
+                    borderSide:
+                        const BorderSide(color: HermesTheme.borderSubtle),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: HermesTheme.primary, width: 1.2),
+                    borderSide: const BorderSide(
+                        color: HermesTheme.primary, width: 1.2),
                   ),
                 ),
-                style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                style:
+                    const TextStyle(fontSize: 13, color: HermesTheme.textMain),
               ),
             ),
 
-            const SizedBox(height: 4),
+            // 标签快捷筛选栏
+            SizedBox(
+              height: 32,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                scrollDirection: Axis.horizontal,
+                itemCount: _commonTags.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (ctx, idx) {
+                  final tag = _commonTags[idx];
+                  final isSelected = _selectedTag == tag;
+
+                  return ChoiceChip(
+                    label: Text(tag == '全部' ? '全部' : '#$tag'),
+                    selected: isSelected,
+                    onSelected: (val) {
+                      if (val) setState(() => _selectedTag = tag);
+                    },
+                    labelStyle: TextStyle(
+                      fontSize: 11,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected
+                          ? HermesTheme.primaryLight
+                          : HermesTheme.textDim,
+                    ),
+                    backgroundColor: HermesTheme.surfaceLight,
+                    selectedColor: HermesTheme.primary.withOpacity(0.25),
+                    visualDensity: VisualDensity.compact,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 6),
             const Divider(color: HermesTheme.border, height: 1),
 
             // 会话列表
             Expanded(
               child: _loading && _sessions.isEmpty
-                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.primary))
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: HermesTheme.primary))
                   : _error != null && _sessions.isEmpty
                       ? Center(
                           child: Padding(
@@ -377,9 +539,16 @@ class _SessionDrawerState extends State<SessionDrawer> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(_error!, style: const TextStyle(fontSize: 12, color: HermesTheme.textDim), textAlign: TextAlign.center),
+                                Text(_error!,
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        color: HermesTheme.textDim),
+                                    textAlign: TextAlign.center),
                                 const SizedBox(height: 8),
-                                OutlinedButton(onPressed: _loadSessions, child: const Text('重试', style: TextStyle(fontSize: 12))),
+                                OutlinedButton(
+                                    onPressed: _loadSessions,
+                                    child: const Text('重试',
+                                        style: TextStyle(fontSize: 12))),
                               ],
                             ),
                           ),
@@ -387,8 +556,11 @@ class _SessionDrawerState extends State<SessionDrawer> {
                       : visibleRows.isEmpty
                           ? Center(
                               child: Text(
-                                _query.isNotEmpty ? "没有找到符合条件的会话" : "暂无历史会话记录",
-                                style: const TextStyle(color: HermesTheme.textDim, fontSize: 13),
+                                _query.isNotEmpty
+                                    ? "没有找到符合条件的会话"
+                                    : "暂无历史会话记录",
+                                style: const TextStyle(
+                                    color: HermesTheme.textDim, fontSize: 13),
                               ),
                             )
                           : ListView.builder(
@@ -397,14 +569,19 @@ class _SessionDrawerState extends State<SessionDrawer> {
                               itemBuilder: (context, index) {
                                 final row = visibleRows[index];
 
-                                // 日期分组标签
+                                // 日期或置顶分组标签
                                 if (row.section != null) {
+                                  final isPinnedSection =
+                                      row.section!.contains('置顶');
                                   return Padding(
-                                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                                    padding:
+                                        const EdgeInsets.fromLTRB(12, 12, 12, 4),
                                     child: Text(
                                       row.section!,
-                                      style: const TextStyle(
-                                        color: HermesTheme.textDim,
+                                      style: TextStyle(
+                                        color: isPinnedSection
+                                            ? const Color(0xFFFBBF24)
+                                            : HermesTheme.textDim,
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
                                         letterSpacing: 0.3,
@@ -414,69 +591,179 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                 }
 
                                 final session = row.session!;
-                                final isSelected = session.id == widget.activeSessionId;
+                                final isSelected =
+                                    session.id == widget.activeSessionId;
+                                final isPinned =
+                                    _pinnedIds.contains(session.id);
+                                final tags = _sessionTags[session.id] ?? [];
 
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 4),
                                   decoration: BoxDecoration(
-                                    color: isSelected ? HermesTheme.surfaceLight : Colors.transparent,
+                                    color: isSelected
+                                        ? HermesTheme.surfaceLight
+                                        : Colors.transparent,
                                     borderRadius: BorderRadius.circular(10),
                                     border: Border.all(
-                                      color: isSelected ? HermesTheme.primary.withOpacity(0.5) : Colors.transparent,
+                                      color: isSelected
+                                          ? HermesTheme.primary.withOpacity(0.5)
+                                          : Colors.transparent,
                                       width: 1,
                                     ),
                                   ),
                                   child: ListTile(
                                     dense: true,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    contentPadding: const EdgeInsets.only(left: 10, right: 4),
-                                    leading: Icon(
-                                      isSelected ? Icons.terminal_rounded : Icons.chat_bubble_outline_rounded,
-                                      size: 16,
-                                      color: isSelected ? HermesTheme.accent : HermesTheme.textMuted,
-                                    ),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(10)),
+                                    contentPadding:
+                                        const EdgeInsets.only(left: 10, right: 4),
+                                    leading: isPinned
+                                        ? const Icon(Icons.push_pin_rounded,
+                                            size: 16, color: Color(0xFFFBBF24))
+                                        : Icon(
+                                            isSelected
+                                                ? Icons.terminal_rounded
+                                                : Icons.chat_bubble_outline_rounded,
+                                            size: 16,
+                                            color: isSelected
+                                                ? HermesTheme.accent
+                                                : HermesTheme.textMuted,
+                                          ),
                                     title: Text(
                                       session.title,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         fontSize: 13,
-                                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                                        color: isSelected ? HermesTheme.textMain : HermesTheme.textMuted,
+                                        fontWeight: isSelected || isPinned
+                                            ? FontWeight.w600
+                                            : FontWeight.normal,
+                                        color: isSelected
+                                            ? HermesTheme.textMain
+                                            : HermesTheme.textMuted,
                                       ),
                                     ),
+                                    subtitle: tags.isNotEmpty
+                                        ? Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 2),
+                                            child: Wrap(
+                                              spacing: 4,
+                                              children: tags.map((t) {
+                                                return Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                          horizontal: 4,
+                                                          vertical: 1),
+                                                  decoration: BoxDecoration(
+                                                    color: HermesTheme.primary
+                                                        .withOpacity(0.15),
+                                                    borderRadius:
+                                                        BorderRadius.circular(4),
+                                                  ),
+                                                  child: Text(
+                                                    '#$t',
+                                                    style: const TextStyle(
+                                                        fontSize: 9,
+                                                        color: HermesTheme
+                                                            .primaryLight),
+                                                  ),
+                                                );
+                                              }).toList(),
+                                            ),
+                                          )
+                                        : null,
                                     trailing: PopupMenuButton<String>(
                                       tooltip: '会话操作',
-                                      icon: const Icon(Icons.more_horiz_rounded, size: 18, color: HermesTheme.textDim),
+                                      icon: const Icon(Icons.more_horiz_rounded,
+                                          size: 18,
+                                          color: HermesTheme.textDim),
                                       color: HermesTheme.surfaceElevated,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12)),
                                       onSelected: (action) {
-                                        if (action == 'rename') {
+                                        if (action == 'pin') {
+                                          _togglePin(session);
+                                        } else if (action == 'tags') {
+                                          _manageTags(session);
+                                        } else if (action == 'rename') {
                                           _renameSession(session);
                                         } else if (action == 'delete') {
                                           _deleteSession(session);
                                         }
                                       },
-                                      itemBuilder: (context) => const [
+                                      itemBuilder: (context) => [
                                         PopupMenuItem(
+                                          value: 'pin',
+                                          height: 38,
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                isPinned
+                                                    ? Icons.push_pin_outlined
+                                                    : Icons.push_pin_rounded,
+                                                size: 16,
+                                                color: const Color(0xFFFBBF24),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(isPinned ? '取消置顶' : '置顶此会话',
+                                                  style: const TextStyle(
+                                                      fontSize: 13,
+                                                      color:
+                                                          HermesTheme.textMain)),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'tags',
+                                          height: 38,
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.label_outline_rounded,
+                                                  size: 16,
+                                                  color: HermesTheme.accent),
+                                              SizedBox(width: 8),
+                                              Text('设置会话标签',
+                                                  style: TextStyle(
+                                                      fontSize: 13,
+                                                      color:
+                                                          HermesTheme.textMain)),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
                                           value: 'rename',
                                           height: 38,
                                           child: Row(
                                             children: [
-                                              Icon(Icons.edit_rounded, size: 16, color: HermesTheme.textMuted),
+                                              Icon(Icons.edit_rounded,
+                                                  size: 16,
+                                                  color: HermesTheme.textMuted),
                                               SizedBox(width: 8),
-                                              Text('重命名会话', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                                              Text('重命名会话',
+                                                  style: TextStyle(
+                                                      fontSize: 13,
+                                                      color:
+                                                          HermesTheme.textMain)),
                                             ],
                                           ),
                                         ),
-                                        PopupMenuItem(
+                                        const PopupMenuItem(
                                           value: 'delete',
                                           height: 38,
                                           child: Row(
                                             children: [
-                                              Icon(Icons.delete_outline_rounded, size: 16, color: HermesTheme.danger),
+                                              Icon(Icons.delete_outline_rounded,
+                                                  size: 16,
+                                                  color: HermesTheme.danger),
                                               SizedBox(width: 8),
-                                              Text('删除此会话', style: TextStyle(fontSize: 13, color: HermesTheme.danger)),
+                                              Text('删除此会话',
+                                                  style: TextStyle(
+                                                      fontSize: 13,
+                                                      color:
+                                                          HermesTheme.danger)),
                                             ],
                                           ),
                                         ),
@@ -499,10 +786,14 @@ class _SessionDrawerState extends State<SessionDrawer> {
               ),
               child: ListTile(
                 dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-                leading: const Icon(Icons.system_update_alt_rounded, size: 18, color: HermesTheme.accent),
-                title: const Text('系统在线更新与版本', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
-                trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: HermesTheme.textDim),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                leading: const Icon(Icons.system_update_alt_rounded,
+                    size: 18, color: HermesTheme.accent),
+                title: const Text('系统在线更新与版本',
+                    style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    size: 18, color: HermesTheme.textDim),
                 onTap: () {
                   Navigator.of(context).pop();
                   Navigator.of(context).push(
