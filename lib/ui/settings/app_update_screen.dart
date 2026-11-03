@@ -16,14 +16,14 @@ class AppUpdateScreen extends StatefulWidget {
 class _AppUpdateScreenState extends State<AppUpdateScreen> {
   static const _channel = MethodChannel('com.hermes.mobile/files');
 
-  // 多源候选清单：优先极速 CDN 与国内容灾镜像，最后回退官方直连
+  // 多源候选清单：优先极速镜像源（无缓存即时直连），再回退全球 CDN 与官方源
   static const List<String> _manifestEndpoints = [
-    'https://fastly.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
-    'https://cdn.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
     'https://ghfast.top/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
     'https://gh-proxy.com/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
     'https://ghproxy.net/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
     'https://gh.ddlc.top/https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
+    'https://fastly.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
+    'https://cdn.jsdelivr.net/gh/xiaoze-hub/hermes-mobile@main/update.json',
     'https://raw.githubusercontent.com/xiaoze-hub/hermes-mobile/main/update.json',
     'https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/update.json',
   ];
@@ -225,6 +225,9 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
               break;
             } else {
               await file.delete();
+              final expectedShort = (release['_sha256'] as String?)?.substring(0, 8) ?? '未知';
+              final actualShort = actual.length >= 8 ? actual.substring(0, 8) : actual;
+              lastDownloadError = '安装包哈希校验不一致(期望:$expectedShort, 实际:$actualShort)';
             }
           }
         } catch (e) {
