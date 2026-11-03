@@ -344,8 +344,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (savedTabIds.isNotEmpty && sessions.isNotEmpty) {
         _openTabs.clear();
         for (final id in savedTabIds) {
-          final s = sessions.where((x) => x.id == id).firstOrNull;
-          if (s != null) _openTabs.add(s);
+          for (final s in sessions) {
+            if (s.id == id) {
+              _openTabs.add(s);
+              break;
+            }
+          }
         }
       }
 

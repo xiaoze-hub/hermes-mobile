@@ -6,6 +6,18 @@ import '../../services/hermes_gateway_service.dart';
 import 'ansi_terminal_view.dart';
 import 'diff_card_view.dart';
 
+class WorkspaceArtifact {
+  final String title;
+  final String type;
+  final String content;
+
+  const WorkspaceArtifact({
+    required this.title,
+    required this.type,
+    required this.content,
+  });
+}
+
 class WorkspaceRailDrawer extends StatefulWidget {
   final HermesGatewayService gateway;
   final String sessionId;
@@ -65,26 +77,26 @@ class _WorkspaceRailDrawerState extends State<WorkspaceRailDrawer>
   }
 
   // 收集当前会话中出现的所有工件与 Diff 补丁
-  List<({String title, String type, String content})> get _collectedArtifacts {
-    final list = <({String title, String type, String content})>[];
+  List<WorkspaceArtifact> get _collectedArtifacts {
+    final list = <WorkspaceArtifact>[];
 
     for (final msg in widget.messages) {
       for (final tool in msg.toolCalls) {
         if (tool.isDiff) {
-          list.add((
+          list.add(WorkspaceArtifact(
             title: '代码差异补丁 (Git Diff)',
             type: 'diff',
             content: tool.result ?? tool.arguments,
           ));
         } else if (tool.category == ToolCategory.subagent) {
-          list.add((
+          list.add(WorkspaceArtifact(
             title: '子智能体汇报: ${tool.subagentRole}',
             type: 'subagent',
             content: tool.result ?? tool.subagentPrompt,
           ));
         } else if (tool.arguments.contains('.py') ||
             tool.name.toLowerCase().contains('python')) {
-          list.add((
+          list.add(WorkspaceArtifact(
             title: 'Python 脚本/任务 (${tool.name})',
             type: 'code',
             content: tool.arguments,
@@ -275,7 +287,7 @@ class _WorkspaceRailDrawerState extends State<WorkspaceRailDrawer>
               ),
               const SizedBox(width: 8),
               IconButton.filled(
-                style: IconButton.filledStyleFrom(
+                style: IconButton.styleFrom(
                     backgroundColor: HermesTheme.primary),
                 icon: _runningCmd
                     ? const SizedBox(
