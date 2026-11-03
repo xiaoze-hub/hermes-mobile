@@ -85,8 +85,11 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
       String succeededSource = '';
 
       for (int i = 0; i < _manifestEndpoints.length; i++) {
-        final endpoint = _manifestEndpoints[i];
-        final label = _getEndpointLabel(endpoint, i);
+        final rawEndpoint = _manifestEndpoints[i];
+        final endpoint = rawEndpoint.contains('?')
+            ? '$rawEndpoint&_t=${DateTime.now().millisecondsSinceEpoch}'
+            : '$rawEndpoint?_t=${DateTime.now().millisecondsSinceEpoch}';
+        final label = _getEndpointLabel(rawEndpoint, i);
         try {
           final response = await _dio.get<dynamic>(
             endpoint,
@@ -102,9 +105,17 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
             if (raw.isNotEmpty && raw.startsWith('{')) {
               final dynamic parsed = jsonDecode(raw);
               if (parsed is Map) {
-                manifest = Map<String, dynamic>.from(parsed);
-                succeededSource = label;
-                break;
+                final candidate = Map<String, dynamic>.from(parsed);
+                final cVer = candidate['version']?.toString() ?? '0.0.0';
+                final curVer = manifest?['version']?.toString() ?? '0.0.0';
+                if (manifest == null || _compareVersions(cVer, curVer) > 0) {
+                  manifest = candidate;
+                  succeededSource = label;
+                }
+                // 若已探测到当前仓库最新版本，提前结束轮询
+                if (_compareVersions(cVer, local['version']?.toString() ?? '0.0.0') > 0) {
+                  break;
+                }
               }
             }
           }
