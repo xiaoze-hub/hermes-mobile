@@ -31,7 +31,6 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
   late final AnimationController _waveController;
 
   String _liveSubtitle = '轻触下方麦克风开始实时对话';
-  String _lastAgentResponse = '';
   final List<Map<String, String>> _transcriptHistory = [];
   bool _autoListenLoop = true;
   StreamSubscription? _chatSubscription;
@@ -137,30 +136,17 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
     setState(() {
       _state = LiveVoiceState.thinking;
       _liveSubtitle = 'Hermes 正在深度推导思考...';
-      _lastAgentResponse = '';
     });
 
     try {
       final responseBuffer = StringBuffer();
-      _chatSubscription = widget.gateway.sendMessage(
-        prompt,
-        sessionId: widget.sessionId,
-      ).listen(
-        (chunk) {
-          if (!mounted) return;
-          responseBuffer.write(chunk);
-          setState(() {
-            _lastAgentResponse = responseBuffer.toString();
-          });
-        },
-        onError: (err) {
-          if (!mounted) return;
-          setState(() {
-            _state = LiveVoiceState.ready;
-            _liveSubtitle = '网络通信异常，请重试';
-          });
-        },
-        onDone: () async {
+      _chatSubscription = widget.gateway.streamEvents.listen((event) async {
+        final type = event['type']?.toString();
+        if (type == 'content' || type == 'chunk') {
+          final delta = (event['content'] ?? event['text'] ?? '').toString();
+          responseBuffer.write(delta);
+        } else if (type == 'done' || type == 'message_end') {
+          _chatSubscription?.cancel();
           if (!mounted) return;
           final answer = responseBuffer.toString().trim();
           if (answer.isNotEmpty) {
@@ -169,7 +155,6 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
               _liveSubtitle = 'Hermes 正在回答...';
               _transcriptHistory.add({'role': 'agent', 'text': answer});
             });
-            // 提取纯文本朗读 (过滤掉 markdown 符号)
             final cleanVoiceText = _cleanMarkdownForSpeech(answer);
             try {
               await _platform.invokeMethod('speak', {
@@ -185,7 +170,12 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
               _liveSubtitle = '等待您的指令';
             });
           }
-        },
+        }
+      });
+
+      await widget.gateway.sendMessage(
+        sessionId: widget.sessionId,
+        text: prompt,
       );
     } catch (_) {
       if (mounted) {
@@ -420,7 +410,7 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
                     children: [
                       // 打断 / 暂停按钮
                       IconButton.filledTonal(
-                        style: IconButton.filledTonal(
+                        style: IconButton.styleFrom(
                           backgroundColor: HermesTheme.surfaceLight,
                           minimumSize: const Size(48, 48),
                         ),
@@ -431,7 +421,7 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
 
                       // 核心麦克风按键
                       IconButton.filled(
-                        style: IconButton.filled(
+                        style: IconButton.styleFrom(
                           backgroundColor: orbColor,
                           foregroundColor: Colors.white,
                           minimumSize: const Size(64, 64),
@@ -453,7 +443,7 @@ class _LiveVoiceScreenState extends State<LiveVoiceScreen> with TickerProviderSt
 
                       // 对话历史速览按钮
                       IconButton.filledTonal(
-                        style: IconButton.filledTonal(
+                        style: IconButton.styleFrom(
                           backgroundColor: HermesTheme.surfaceLight,
                           minimumSize: const Size(48, 48),
                         ),

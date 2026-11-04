@@ -174,7 +174,7 @@ class _ProjectsKanbanScreenState extends State<ProjectsKanbanScreen> with Single
   }
 
   Future<void> _advanceTaskStatus(KanbanTask task, bool forward) async {
-    final values = KanbanStatus.values;
+    const values = KanbanStatus.values;
     final currentIndex = values.indexOf(task.status);
     final targetIndex = forward ? currentIndex + 1 : currentIndex - 1;
     if (targetIndex >= 0 && targetIndex < values.length) {
@@ -300,7 +300,7 @@ class _ProjectsKanbanScreenState extends State<ProjectsKanbanScreen> with Single
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.dashboard_customize_outlined, size: 42, color: HermesTheme.borderHighlight),
+            const Icon(Icons.dashboard_customize_outlined, size: 42, color: HermesTheme.borderHighlight),
             const SizedBox(height: 12),
             Text('当前暂无【${status.label}】任务', style: const TextStyle(fontSize: 13, color: HermesTheme.textDim)),
             const SizedBox(height: 12),

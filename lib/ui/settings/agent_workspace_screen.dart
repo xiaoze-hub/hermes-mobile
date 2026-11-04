@@ -175,7 +175,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
         ],
       ),
     );
-    if (form != true || name.text.trim().isEmpty || prompt.text.trim().isEmpty) return;
+    if (form != true || name.text.trim().isEmpty || prompt.text.trim().isEmpty) {
+      return;
+    }
     try {
       await _rpc('cron.manage', {
         'action': 'add',
