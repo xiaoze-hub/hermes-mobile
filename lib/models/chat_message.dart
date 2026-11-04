@@ -144,6 +144,69 @@ class ToolCallInfo {
     final s = (diff.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
   }
+
+  String get humanCategoryName {
+    switch (category) {
+      case ToolCategory.bash:
+        return '终端命令';
+      case ToolCategory.daemon:
+        return '后台进程';
+      case ToolCategory.python:
+        return 'Python';
+      case ToolCategory.web:
+        return '网络检索';
+      case ToolCategory.io:
+        return '文件读写';
+      case ToolCategory.subagent:
+        return '子特工';
+      case ToolCategory.cron:
+        return '定时任务';
+      case ToolCategory.system:
+        return '系统服务';
+    }
+  }
+
+  String get humanActionSummary {
+    if (category == ToolCategory.subagent) {
+      return '协同特工: $subagentRole';
+    }
+    if (category == ToolCategory.cron && cronSchedule.isNotEmpty) {
+      return '定时巡检: $cronSchedule';
+    }
+    if (arguments.trim().isEmpty) {
+      return name;
+    }
+    try {
+      final decoded = jsonDecode(arguments);
+      if (decoded is Map) {
+        if (decoded.containsKey('command') && decoded['command'] != null) {
+          final cmd = decoded['command'].toString().trim();
+          return cmd.startsWith('\$') ? cmd : '\$ $cmd';
+        }
+        if (decoded.containsKey('cmd') && decoded['cmd'] != null) {
+          final cmd = decoded['cmd'].toString().trim();
+          return cmd.startsWith('\$') ? cmd : '\$ $cmd';
+        }
+        if (decoded.containsKey('query') && decoded['query'] != null) {
+          return '检索: "${decoded['query']}"';
+        }
+        if (decoded.containsKey('path') && decoded['path'] != null) {
+          return '路径: ${decoded['path']}';
+        }
+        if (decoded.containsKey('file') && decoded['file'] != null) {
+          return '文件: ${decoded['file']}';
+        }
+        if (decoded.containsKey('prompt') && decoded['prompt'] != null) {
+          return decoded['prompt'].toString();
+        }
+      }
+    } catch (_) {}
+    final trimmed = arguments.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      return name;
+    }
+    return trimmed;
+  }
 }
 
 class InflightTaskInfo {

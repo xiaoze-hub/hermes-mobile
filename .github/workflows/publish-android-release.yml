@@ -75,7 +75,7 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-              "notes": "1. 极致原生性能与体积瘦身：开启 R8 FullMode 编译优化、代码混淆与无用资源缩减 (shrinkResources)，显著降低包体积与内存占用。\n2. 全链路异步 I/O 与防 ANR：原生接入 Hermes-IO 专用守护线程池，文件读写与路径检测全面解耦主线程 Looper。\n3. Flutter 流式渲染与计算加速：大附件 base64 移至独立 Isolate (compute) 异步处理，消息列表接入 RepaintBoundary 帧级重绘隔离。\n4. 完备的系统级任务完成状态栏横幅、触觉震动与一键通道检测。"
+              "notes": "1. 层次化工具执行卡片：告别原始 JSON 刷屏，默认 48dp 紧凑型胶囊呈现人类可读的终端指令与执行结果，底层参数支持渐进折叠展开。\n2. 雅致思维链呈现：自然人文排版与琥珀色左侧引导微光线，深度推导过程清晰易读。\n3. 顶栏呼吸感重塑：整合模型快速切换、Token 容量透视盘与网关状态为全景会话底板，顶栏精简至 2 个核心动作。\n4. 多功能交互岛：输入栏 + 按钮一键唤出附件上传、斜杠指令面板与高频快捷运维巡检。\n5. 视觉体系升级：温暖黑曜石与深板岩阶梯，全景卡片圆角过渡升级为现代 16dp 规范。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)

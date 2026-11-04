@@ -30,6 +30,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   final HermesStorage _storage = HermesStorage();
@@ -1160,7 +1161,7 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (_connectionStatus) {
       case ConnectionStatus.connected:
         dotColor = HermesTheme.accent;
-        statusText = "Hermes · 连通在线";
+        statusText = _currentModel.isEmpty ? "在线 · 就绪" : _currentModel.split('/').last;
         break;
       case ConnectionStatus.connecting:
       case ConnectionStatus.reconnecting:
@@ -1176,11 +1177,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: HermesTheme.surfaceLight,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: HermesTheme.borderSubtle, width: 0.8),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: HermesTheme.borderSubtle, width: 0.6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1192,15 +1193,17 @@ class _ChatScreenState extends State<ChatScreen> {
               shape: BoxShape.circle,
               color: dotColor,
               boxShadow: [
-                BoxShadow(color: dotColor.withOpacity(0.5), blurRadius: 4, spreadRadius: 0.5),
+                BoxShadow(color: dotColor.withOpacity(0.4), blurRadius: 4, spreadRadius: 0.5),
               ],
             ),
           ),
           const SizedBox(width: 5),
           Text(
             statusText,
-            style: const TextStyle(fontSize: 10, color: HermesTheme.textMuted, letterSpacing: 0.2),
+            style: const TextStyle(fontSize: 10.5, color: HermesTheme.textMuted, letterSpacing: 0.2),
           ),
+          const SizedBox(width: 2),
+          const Icon(Icons.keyboard_arrow_down_rounded, size: 12, color: HermesTheme.textDim),
         ],
       ),
     );
@@ -1319,65 +1322,250 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _showSessionInfoAndModelSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: HermesTheme.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.borderSubtle,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _activeSession?.title ?? 'Hermes 对话',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: HermesTheme.textMain,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '会话 ID: ${_activeSession?.id ?? "未绑定"}',
+                          style: const TextStyle(fontSize: 11, color: HermesTheme.textDim),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '重命名',
+                    icon: const Icon(Icons.edit_outlined, size: 18, color: HermesTheme.textMuted),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _renameCurrentSession();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // 模型卡片
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: HermesTheme.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: HermesTheme.borderSubtle),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: HermesTheme.accent.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.auto_awesome_rounded, color: HermesTheme.accent, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('当前驱动模型', style: TextStyle(fontSize: 11, color: HermesTheme.textMuted)),
+                          const SizedBox(height: 2),
+                          Text(
+                            _currentModel.isEmpty ? '默认模型' : _currentModel,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    FilledButton.tonal(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: HermesTheme.surfaceLight,
+                        visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _showModelPicker();
+                      },
+                      child: const Text('切换', style: TextStyle(fontSize: 12, color: HermesTheme.accent)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // 上下文容量透视
+              if (widget.gatewayService.supportsJsonRpc) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: HermesTheme.borderSubtle),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.pie_chart_outline_rounded, size: 16, color: HermesTheme.primaryLight),
+                              SizedBox(width: 6),
+                              Text('上下文容量深度透视',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                            ],
+                          ),
+                          TextButton(
+                            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: EdgeInsets.zero),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _sendMessageWithAttachments(
+                                '请将我们之前的关键决策、重要参数与系统状态总结提炼为一份精简备忘录，帮助压缩上下文，以便后续高效协作。',
+                                const [],
+                              );
+                            },
+                            child: const Text('✨ 智能压缩', style: TextStyle(fontSize: 12, color: HermesTheme.accent)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ContextMeterChip(
+                        gateway: widget.gatewayService,
+                        sessionId: _activeSession?.id ?? '',
+                        onSendCompactionPrompt: (p) => _sendMessageWithAttachments(p, const []),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // 控制台与清理动作
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: const BorderSide(color: HermesTheme.borderSubtle),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.developer_board_rounded, size: 18, color: HermesTheme.accent),
+                      label: const Text('工作区控制台', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _scaffoldKey.currentState?.openEndDrawer();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: const BorderSide(color: HermesTheme.borderSubtle),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.cleaning_services_outlined, size: 18, color: HermesTheme.warning),
+                      label: const Text('清空历史消息', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _clearCurrentMessages();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: HermesTheme.background,
       appBar: AppBar(
         titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _activeSession?.title ?? "Hermes Agent",
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+        title: InkWell(
+          onTap: _showSessionInfoAndModelSheet,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _activeSession?.title ?? "Hermes Agent",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: HermesTheme.textDim),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                _buildTelemetryBadge(),
+              ],
             ),
-            const SizedBox(height: 2),
-            _buildTelemetryBadge(),
-          ],
+          ),
         ),
         actions: [
-          // 上下文容量透视芯片
-          ContextMeterChip(
-            gateway: widget.gatewayService,
-            sessionId: _activeSession?.id ?? '',
-            onSendCompactionPrompt: (p) => _sendMessageWithAttachments(p, const []),
-          ),
-          const SizedBox(width: 4),
-
-          // 模型快速切换 Pill
-          TextButton.icon(
-            onPressed: _showModelPicker,
-            icon: const Icon(Icons.auto_awesome_rounded, size: 15, color: HermesTheme.accent),
-            label: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 82),
-              child: Text(
-                _currentModel.isEmpty ? '模型' : _currentModel.split('/').last,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: HermesTheme.textMain),
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              backgroundColor: HermesTheme.surfaceLight,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            ),
-          ),
-          const SizedBox(width: 4),
-
-          // 桌面级工作区控制台 (Workspace Rails) 快捷抽屉
-          Builder(
-            builder: (drawerCtx) => IconButton(
-              icon: const Icon(Icons.developer_board_rounded, size: 20, color: HermesTheme.accent),
-              tooltip: "工作区控制台 (终端/文件/工件)",
-              onPressed: () => Scaffold.of(drawerCtx).openEndDrawer(),
-            ),
-          ),
-          const SizedBox(width: 2),
-
           // 新建会话按钮
           IconButton(
             icon: const Icon(Icons.edit_square, size: 19, color: HermesTheme.textMain),
@@ -1385,13 +1573,17 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: _createNewSession,
           ),
 
-          // 当前会话与系统控制菜单
+          // 会话与控制菜单
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, size: 20, color: HermesTheme.textMain),
+            icon: const Icon(Icons.more_horiz_rounded, size: 21, color: HermesTheme.textMain),
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'rename') {
+              if (val == 'workspace') {
+                _scaffoldKey.currentState?.openEndDrawer();
+              } else if (val == 'model') {
+                _showModelPicker();
+              } else if (val == 'rename') {
                 _renameCurrentSession();
               } else if (val == 'export') {
                 _exportCurrentSession();
@@ -1416,11 +1608,33 @@ class _ChatScreenState extends State<ChatScreen> {
             },
             itemBuilder: (context) => const [
               PopupMenuItem(
+                value: 'workspace',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.developer_board_rounded, size: 16, color: HermesTheme.accent),
+                    SizedBox(width: 10),
+                    Text('工作区控制台 (终端/文件/工件)', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'model',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, size: 16, color: HermesTheme.accent),
+                    SizedBox(width: 10),
+                    Text('切换 AI 模型', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
                 value: 'rename',
                 height: 38,
                 child: Row(
                   children: [
-                    Icon(Icons.edit_outlined, size: 16, color: HermesTheme.accent),
+                    Icon(Icons.edit_outlined, size: 16, color: HermesTheme.textMuted),
                     SizedBox(width: 10),
                     Text('重命名当前会话', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
                   ],

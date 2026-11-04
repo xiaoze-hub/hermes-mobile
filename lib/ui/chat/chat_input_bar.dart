@@ -218,6 +218,96 @@ class _ChatInputBarState extends State<ChatInputBar> {
     setState(() {});
   }
 
+  void _showActionSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: HermesTheme.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.borderSubtle,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.cyan.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.attach_file_rounded, color: HermesTheme.cyan, size: 20),
+                ),
+                title: const Text('上传图片或文件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                subtitle: const Text('支持代码、图片、日志、PDF (最大 15MB)', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFiles();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.accent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.terminal_rounded, color: HermesTheme.accent, size: 20),
+                ),
+                title: const Text('斜杠指令面板 (Slash Commands)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                subtitle: const Text('浏览所有可用命令与快捷工具', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() => _showSlashPalette = true);
+                },
+              ),
+              const Divider(color: HermesTheme.borderSubtle, height: 20),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Text('快捷运维巡检 (Quick Macros)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: HermesTheme.textMuted)),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _quickMacros.map((macro) => ActionChip(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    backgroundColor: HermesTheme.surfaceLight,
+                    side: const BorderSide(color: HermesTheme.borderSubtle, width: 0.8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    label: Text(macro['label']!, style: const TextStyle(fontSize: 11.5, color: HermesTheme.textMain)),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _applyMacro(macro['cmd']!);
+                    },
+                  )).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -406,12 +496,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // 左侧添加附件按钮 (+)
+                  // 左侧添加附件与功能菜单按钮 (+)
                   Padding(
                     padding: const EdgeInsets.only(left: 6, bottom: 5),
                     child: IconButton(
-                      tooltip: '添加图片或文件',
-                      onPressed: widget.isConnected && !_uploading && !_sending ? _pickFiles : null,
+                      tooltip: '功能菜单与附件',
+                      onPressed: widget.isConnected && !_uploading && !_sending ? _showActionSheet : null,
                       icon: _uploading
                           ? const SizedBox(
                               width: 16,
