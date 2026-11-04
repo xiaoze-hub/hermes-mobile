@@ -2,6 +2,6 @@
   "version": "1.5.0",
   "buildNumber": 16,
   "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/latest/download/hermes-mobile.apk",
-  "sha256": "",
+  "sha256": "d0dee4e2658319969e8f8350d7782d086d322415d25df4c068f0fe34741cd755",
   "notes": "1. Live Mode 全双工实时拟人语音：流体发光音球交互、低延迟双工对练与原生 TTS 语音播报，支持全自动双向对话循环与轻触打断。\n2. Projects & Kanban 任务看板：支持多特工流水线任务进度跟踪，直观管理待规划、执行中、待审批与已完成，一键跨入关联对话。\n3. Routines 跨平台 Webhook 推送：定时巡检任务完成即时推送至 Telegram、Discord 与 Slack 团队工作流。\n4. Usage & Spend 算力与开销大盘：实时透视 Token 累计消耗分布、各模型请求占比与预估费用。\n5. CameraX 原生直摄与暗黑秒开：支持拍照直接送入多模态模型；原生沉浸深色 Splash 消除冷启动白闪。\n6. Agent 特工工作台全面换装 16dp 黑曜石企业级设计规范。"
 }
