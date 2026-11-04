@@ -22,9 +22,17 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
   final _skillQuery = TextEditingController();
 
   @override
-  void initState() { super.initState(); _refresh(); }
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
   @override
-  void dispose() { _tabs.dispose(); _skillQuery.dispose(); super.dispose(); }
+  void dispose() {
+    _tabs.dispose();
+    _skillQuery.dispose();
+    super.dispose();
+  }
 
   Future<dynamic> _rpc(String method, Map<String, dynamic> params) => widget.gateway.callRpc(method, params);
 
@@ -49,16 +57,28 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
       setState(() => _error = '当前会话未连接到支持 JSON-RPC 的 Hermes 网关。请升级网关并重新连接后使用 Agent 管理功能。');
       return;
     }
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     final results = await Future.wait([
       _rpc('tools.list', {'session_id': widget.sessionId}),
       _fetchCronJobs(),
       _rpc('session.context_breakdown', {'session_id': widget.sessionId}),
       _rpc('skills.manage', {'action': 'list'}),
-    ].map((future) async { try { return await future; } catch (e) { return {'_error': e.toString()}; } }));
+    ].map((future) async {
+      try {
+        return await future;
+      } catch (e) {
+        return {'_error': e.toString()};
+      }
+    }));
     if (!mounted) return;
     setState(() {
-      final tools = results[0]; _toolsets = tools is Map && tools['toolsets'] is List ? List<Map<String, dynamic>>.from((tools['toolsets'] as List).whereType<Map>()) : [];
+      final tools = results[0];
+      _toolsets = tools is Map && tools['toolsets'] is List
+          ? List<Map<String, dynamic>>.from((tools['toolsets'] as List).whereType<Map>())
+          : [];
       final cron = results[1];
       List<Map<String, dynamic>> extractedJobs = [];
       if (cron is List) {
@@ -83,79 +103,526 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
     if (name.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await _rpc('tools.configure', {'action': enabled ? 'enable' : 'disable', 'names': [name], 'session_id': widget.sessionId});
+      await _rpc('tools.configure', {
+        'action': enabled ? 'enable' : 'disable',
+        'names': [name],
+        'session_id': widget.sessionId
+      });
       await _refresh();
-    } catch (e) { if (mounted) setState(() { _busy = false; _error = '工具配置失败：$e'; }); }
+    } catch (e) {
+      if (mounted) setState(() {
+        _busy = false;
+        _error = '工具配置失败：$e';
+      });
+    }
   }
 
   Future<void> _cronAction(String action, String id) async {
-    try { await _rpc('cron.manage', {'action': action, 'name': id}); await _refresh(); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('定时任务操作失败：$e'))); }
+    try {
+      await _rpc('cron.manage', {'action': action, 'name': id});
+      await _refresh();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('定时任务操作失败：$e')));
+    }
   }
 
   Future<void> _addCron() async {
-    final name = TextEditingController(); final schedule = TextEditingController(text: '0 9 * * *'); final prompt = TextEditingController();
-    final form = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('新增定时任务'),
-      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: name, decoration: const InputDecoration(labelText: '任务名称')),
-        TextField(controller: schedule, decoration: const InputDecoration(labelText: 'Cron 表达式', helperText: '例如 0 9 * * *（每天 09:00）')),
-        TextField(controller: prompt, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: '交给 Hermes 执行的指令')),
-      ])),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('创建'))],
-    ));
+    final name = TextEditingController();
+    final schedule = TextEditingController(text: '0 9 * * *');
+    final prompt = TextEditingController();
+    final form = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: HermesTheme.surfaceElevated,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('新增定时计划任务', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                decoration: const InputDecoration(labelText: '任务名称', hintText: '如: 每日早报 / 容器巡检'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: schedule,
+                style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                decoration: const InputDecoration(
+                  labelText: 'Cron 表达式',
+                  helperText: '标准 5 段式，如 0 9 * * *（每天 09:00）',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: prompt,
+                minLines: 2,
+                maxLines: 4,
+                style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                decoration: const InputDecoration(labelText: '交给 Hermes 执行的指令', hintText: '具体的自动化巡检提示词'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
+            child: const Text('创建任务'),
+          ),
+        ],
+      ),
+    );
     if (form != true || name.text.trim().isEmpty || prompt.text.trim().isEmpty) return;
     try {
-      await _rpc('cron.manage', {'action': 'add', 'name': name.text.trim(), 'schedule': schedule.text.trim(), 'prompt': prompt.text.trim()});
+      await _rpc('cron.manage', {
+        'action': 'add',
+        'name': name.text.trim(),
+        'schedule': schedule.text.trim(),
+        'prompt': prompt.text.trim()
+      });
       await _refresh();
-    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建失败：$e'))); }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建失败：$e')));
+    }
   }
 
   Future<void> _searchSkills({bool install = false}) async {
-    final query = _skillQuery.text.trim(); if (query.isEmpty) return;
+    final query = _skillQuery.text.trim();
+    if (query.isEmpty) return;
     try {
       final result = await _rpc('skills.manage', {'action': install ? 'install' : 'search', 'query': query});
       if (mounted) setState(() => _skills = Map<String, dynamic>.from(result as Map));
-    } catch (e) { if (mounted) setState(() => _error = '技能中心不可用：$e'); }
+    } catch (e) {
+      if (mounted) setState(() => _error = '技能中心不可用：$e');
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Agent 工作台'), actions: [IconButton(onPressed: _busy ? null : _refresh, icon: const Icon(Icons.refresh))], bottom: TabBar(controller: _tabs, isScrollable: true, tabs: const [Tab(text: '工具'), Tab(text: '技能'), Tab(text: '定时任务'), Tab(text: '上下文') ])),
-    body: _error != null && _toolsets.isEmpty && _jobs.isEmpty && _context.isEmpty
-      ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.extension_off_outlined, size: 42, color: HermesTheme.textMuted), const SizedBox(height: 14), Text(_error!, textAlign: TextAlign.center), const SizedBox(height: 12), OutlinedButton.icon(onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('重新连接并重试'))])))
-      : TabBarView(controller: _tabs, children: [_toolsView(), _skillsView(), _cronView(), _contextView()]),
-  );
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: HermesTheme.background,
+      appBar: AppBar(
+        title: const Text('Agent 特工工作台', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+        actions: [
+          IconButton(
+            onPressed: _busy ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            tooltip: '刷新特工状态',
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabs,
+          indicatorColor: HermesTheme.primary,
+          indicatorWeight: 2.5,
+          labelColor: HermesTheme.primaryLight,
+          unselectedLabelColor: HermesTheme.textDim,
+          labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+          tabs: const [
+            Tab(text: '工具箱 & MCP'),
+            Tab(text: '技能扩展'),
+            Tab(text: '定时任务 (Cron)'),
+            Tab(text: '上下文容量'),
+          ],
+        ),
+      ),
+      body: _error != null && _toolsets.isEmpty && _jobs.isEmpty && _context.isEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.extension_off_outlined, size: 48, color: HermesTheme.borderHighlight),
+                    const SizedBox(height: 16),
+                    Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: HermesTheme.textMuted, fontSize: 13)),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: _refresh,
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('重新连接并重试'),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: HermesTheme.borderSubtle),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : TabBarView(
+              controller: _tabs,
+              children: [
+                _toolsView(),
+                _skillsView(),
+                _cronView(),
+                _contextView(),
+              ],
+            ),
+    );
+  }
 
-  Widget _toolsView() => _toolsets.isEmpty ? _empty('网关未返回工具集') : ListView(padding: const EdgeInsets.all(16), children: [
-    const Text('工具和 MCP 服务', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 6), const Text('开关会立即重建当前会话中的 Agent。', style: TextStyle(color: HermesTheme.textMuted)),
-    const SizedBox(height: 12),
-    ..._toolsets.map((row) { final enabled = row['enabled'] == true || row['is_enabled'] == true; final title = (row['label'] ?? row['name'] ?? row['key'] ?? '工具集').toString(); final tools = row['tools'] is List ? (row['tools'] as List).join(' · ') : (row['description'] ?? '').toString(); return SwitchListTile(title: Text(title), subtitle: Text(tools, maxLines: 2, overflow: TextOverflow.ellipsis), value: enabled, onChanged: _busy ? null : (value) => _configureTool(row, value)); }),
-  ]);
+  Widget _toolsView() {
+    if (_toolsets.isEmpty) return _empty('网关暂未返回可用工具集与 MCP 服务');
 
-  Widget _skillsView() { final installed = _skills['skills']; final results = _skills['results']; return ListView(padding: const EdgeInsets.all(16), children: [
-    const Text('技能', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-    const SizedBox(height: 10), Row(children: [Expanded(child: TextField(controller: _skillQuery, decoration: const InputDecoration(hintText: '搜索技能中心'))), IconButton(onPressed: () => _searchSkills(), icon: const Icon(Icons.search))]),
-    if (results is List) ...results.whereType<Map>().map((item) => ListTile(title: Text((item['name'] ?? item['title'] ?? '技能').toString()), subtitle: Text((item['description'] ?? '').toString(), maxLines: 2, overflow: TextOverflow.ellipsis), trailing: IconButton(tooltip: '安装技能', onPressed: () { _skillQuery.text = (item['name'] ?? item['id'] ?? '').toString(); _searchSkills(install: true); }, icon: const Icon(Icons.download_outlined)))),
-    if (installed is Map) ...installed.entries.expand((entry) => (entry.value is List ? entry.value as List : const []).map((name) => ListTile(leading: const Icon(Icons.bolt_outlined), title: Text(name.toString()), subtitle: Text(entry.key.toString())))),
-    if (installed == null && results == null) _empty('已安装技能和搜索结果将在此显示'),
-  ]); }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('工具与 MCP 协议扩展', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+        const SizedBox(height: 4),
+        const Text('开关将即时生效，调整特工拥有的环境感知与指令执行权限。', style: TextStyle(fontSize: 11.5, color: HermesTheme.textDim)),
+        const SizedBox(height: 14),
+        ..._toolsets.map((row) {
+          final enabled = row['enabled'] == true || row['is_enabled'] == true;
+          final title = (row['label'] ?? row['name'] ?? row['key'] ?? '工具集').toString();
+          final tools = row['tools'] is List
+              ? (row['tools'] as List).join(' · ')
+              : (row['description'] ?? '').toString();
 
-  Widget _cronView() => ListView(padding: const EdgeInsets.all(16), children: [
-    Row(children: [const Expanded(child: Text('定时任务', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700))), FilledButton.icon(onPressed: _addCron, icon: const Icon(Icons.add), label: const Text('新增'))]),
-    const SizedBox(height: 8),
-    if (_jobs.isEmpty) _empty('还没有定时任务。可添加周期指令，让 Hermes 按计划执行。'),
-    ..._jobs.map((job) { final id = (job['job_id'] ?? job['name'] ?? '').toString(); final paused = job['enabled'] == false || job['paused'] == true; return ListTile(leading: Icon(paused ? Icons.pause_circle_outline : Icons.schedule), title: Text((job['name'] ?? '未命名任务').toString()), subtitle: Text('${job['schedule'] ?? '无计划'} · ${job['prompt_preview'] ?? ''}\n下次运行：${job['next_run_at'] ?? '未知'}', maxLines: 3, overflow: TextOverflow.ellipsis), isThreeLine: true, trailing: PopupMenuButton<String>(onSelected: (action) => _cronAction(action, id), itemBuilder: (_) => [PopupMenuItem(value: paused ? 'resume' : 'pause', child: Text(paused ? '恢复' : '暂停')), const PopupMenuItem(value: 'remove', child: Text('删除'))])); }),
-  ]);
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: HermesTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: enabled ? HermesTheme.primary.withOpacity(0.3) : HermesTheme.borderSubtle),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: enabled ? HermesTheme.primary.withOpacity(0.15) : HermesTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.construction_rounded,
+                    size: 18,
+                    color: enabled ? HermesTheme.accent : HermesTheme.textDim,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                      const SizedBox(height: 2),
+                      Text(
+                        tools,
+                        style: const TextStyle(fontSize: 11, color: HermesTheme.textDim),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: enabled,
+                  activeColor: HermesTheme.accent,
+                  onChanged: _busy ? null : (val) => _configureTool(row, val),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
 
-  Widget _contextView() { final used = (_context['context_used'] as num?)?.toDouble() ?? 0; final max = (_context['context_max'] as num?)?.toDouble() ?? 0; final percent = (_context['context_percent'] as num?)?.toDouble() ?? (max > 0 ? used / max * 100 : 0); final categories = _context['categories']; return ListView(padding: const EdgeInsets.all(16), children: [
-    const Text('会话上下文', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)), const SizedBox(height: 14),
-    if (max > 0) Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${percent.toStringAsFixed(0)}% 已使用', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)), const SizedBox(height: 10), LinearProgressIndicator(value: (percent / 100).clamp(0, 1)), const SizedBox(height: 8), Text('${used.toStringAsFixed(0)} / ${max.toStringAsFixed(0)} tokens · ${_context['model'] ?? ''}', style: const TextStyle(color: HermesTheme.textMuted))]))),
-    if (categories is List) ...categories.whereType<Map>().map((row) => ListTile(title: Text((row['label'] ?? row['name'] ?? '分类').toString()), subtitle: Text('${row['tokens'] ?? row['count'] ?? ''} tokens'))),
-    if (max == 0) _empty('暂时无法读取上下文统计。此方法需要较新的 Hermes 网关，或 Agent 尚未初始化。'),
-    const SizedBox(height: 12), OutlinedButton.icon(onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('刷新统计')),
-  ]); }
+  Widget _skillsView() {
+    final installed = _skills['skills'];
+    final results = _skills['results'];
 
-  Widget _empty(String text) => Padding(padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16), child: Center(child: Text(text, textAlign: TextAlign.center, style: const TextStyle(color: HermesTheme.textMuted))));
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('技能市场与生态发现', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: HermesTheme.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: HermesTheme.borderSubtle),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 12),
+              const Icon(Icons.search_rounded, size: 18, color: HermesTheme.textDim),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _skillQuery,
+                  style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                  decoration: const InputDecoration(
+                    hintText: '搜索技能 (如: docker, git, sql, devops)...',
+                    border: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                  ),
+                  onSubmitted: (_) => _searchSkills(),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.arrow_forward_rounded, size: 18, color: HermesTheme.accent),
+                onPressed: () => _searchSkills(),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (results is List && results.isNotEmpty) ...[
+          const Text('搜索结果', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: HermesTheme.primaryLight)),
+          const SizedBox(height: 8),
+          ...results.whereType<Map>().map((item) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: HermesTheme.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: HermesTheme.borderSubtle),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text((item['name'] ?? item['title'] ?? '技能').toString(), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                          const SizedBox(height: 2),
+                          Text((item['description'] ?? '').toString(), style: const TextStyle(fontSize: 11, color: HermesTheme.textDim), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '安装技能',
+                      icon: const Icon(Icons.download_rounded, size: 18, color: HermesTheme.accent),
+                      onPressed: () {
+                        _skillQuery.text = (item['name'] ?? item['id'] ?? '').toString();
+                        _searchSkills(install: true);
+                      },
+                    ),
+                  ],
+                ),
+              )),
+        ],
+        if (installed is Map && installed.isNotEmpty) ...[
+          const Text('已安装技能包', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+          const SizedBox(height: 8),
+          ...installed.entries.expand((entry) => (entry.value is List ? entry.value as List : const []).map((name) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: HermesTheme.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: HermesTheme.borderSubtle),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.bolt_rounded, size: 18, color: HermesTheme.warning),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name.toString(), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                          Text('来源: ${entry.key}', style: const TextStyle(fontSize: 10.5, color: HermesTheme.textDim)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ))),
+        ],
+        if (installed == null && results == null) _empty('已安装技能和搜索结果将在此清晰展示'),
+      ],
+    );
+  }
+
+  Widget _cronView() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Linux 定时任务 (Cron)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                  SizedBox(height: 2),
+                  Text('无人值守后台自动化，支持执行结果 Webhook 推送。', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _addCron,
+              style: FilledButton.styleFrom(
+                backgroundColor: HermesTheme.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('新增计划', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (_jobs.isEmpty) _empty('还没有定时任务。可添加周期指令，让 Hermes 按计划执行运维巡检。'),
+        ..._jobs.map((job) {
+          final id = (job['job_id'] ?? job['name'] ?? '').toString();
+          final paused = job['enabled'] == false || job['paused'] == true;
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: HermesTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: HermesTheme.borderSubtle),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      paused ? Icons.pause_circle_outline_rounded : Icons.schedule_rounded,
+                      size: 18,
+                      color: paused ? HermesTheme.warning : HermesTheme.accent,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        (job['name'] ?? '未命名任务').toString(),
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: HermesTheme.textMain),
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_horiz_rounded, size: 18, color: HermesTheme.textDim),
+                      color: HermesTheme.surfaceElevated,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      onSelected: (action) => _cronAction(action, id),
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                          value: paused ? 'resume' : 'pause',
+                          height: 36,
+                          child: Text(paused ? '恢复执行' : '暂停计划', style: const TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                        ),
+                        const PopupMenuItem(
+                          value: 'remove',
+                          height: 36,
+                          child: Text('删除任务', style: TextStyle(fontSize: 13, color: HermesTheme.danger)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '计划表达式: ${job['schedule'] ?? '无计划'}',
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: HermesTheme.primaryLight),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '指令: ${job['prompt_preview'] ?? job['prompt'] ?? '无提示词'}',
+                  style: const TextStyle(fontSize: 12, color: HermesTheme.textMuted),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '下次执行时间: ${job['next_run_at'] ?? '计算中...'}',
+                  style: const TextStyle(fontSize: 10.5, color: HermesTheme.textDim),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _contextView() {
+    final used = (_context['context_used'] as num?)?.toDouble() ?? 0;
+    final max = (_context['context_max'] as num?)?.toDouble() ?? 0;
+    final percent = (_context['context_percent'] as num?)?.toDouble() ?? (max > 0 ? used / max * 100 : 0);
+    final categories = _context['categories'];
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('会话上下文深度透视', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+        const SizedBox(height: 12),
+        if (max > 0)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: HermesTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: HermesTheme.borderSubtle),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('${percent.toStringAsFixed(1)}% 容量已占用', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                    Text('${_context['model'] ?? ''}', style: const TextStyle(fontSize: 12, color: HermesTheme.primaryLight)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: (percent / 100).clamp(0, 1),
+                  backgroundColor: HermesTheme.surfaceLight,
+                  color: percent > 80 ? HermesTheme.danger : HermesTheme.accent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '当前占用: ${used.toStringAsFixed(0)} / ${max.toStringAsFixed(0)} Tokens',
+                  style: const TextStyle(fontSize: 12, color: HermesTheme.textMuted, fontFamily: 'monospace'),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 14),
+        if (categories is List) ...[
+          const Text('Token 构成明细', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+          const SizedBox(height: 8),
+          ...categories.whereType<Map>().map((row) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: HermesTheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: HermesTheme.borderSubtle),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text((row['label'] ?? row['name'] ?? '分类').toString(), style: const TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                    Text('${row['tokens'] ?? row['count'] ?? ''} Tokens', style: const TextStyle(fontSize: 12, color: HermesTheme.textDim, fontFamily: 'monospace')),
+                  ],
+                ),
+              )),
+        ],
+        if (max == 0) _empty('暂时无法读取上下文统计。此方法需要较新的 Hermes 网关，或当前 Agent 会话尚未产生对话历史。'),
+      ],
+    );
+  }
+
+  Widget _empty(String text) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
+        child: Center(child: Text(text, textAlign: TextAlign.center, style: const TextStyle(color: HermesTheme.textDim, fontSize: 13))),
+      );
 }

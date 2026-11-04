@@ -9,6 +9,9 @@ import 'app_update_screen.dart';
 import 'gateway_cluster_dialog.dart';
 import 'gateway_management_screen.dart';
 import 'gateway_settings_dialog.dart';
+import '../projects/projects_kanban_screen.dart';
+import 'usage_spend_screen.dart';
+import '../../services/webhook_service.dart';
 
 class SystemSettingsScreen extends StatefulWidget {
   final HermesGatewayService gatewayService;
@@ -121,6 +124,126 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
         }
       } catch (_) {}
     }
+  }
+
+  Future<void> _showWebhookSettingsDialog() async {
+    final config = await _storage.getWebhookConfig();
+    bool enabled = config['enabled'] == true;
+    final tgToken = TextEditingController(text: config['telegramBotToken']?.toString() ?? '');
+    final tgChatId = TextEditingController(text: config['telegramChatId']?.toString() ?? '');
+    final discord = TextEditingController(text: config['discordWebhookUrl']?.toString() ?? '');
+    final slack = TextEditingController(text: config['slackWebhookUrl']?.toString() ?? '');
+    final custom = TextEditingController(text: config['customWebhookUrl']?.toString() ?? '');
+
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: HermesTheme.surfaceElevated,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(18, 12, 18, 20 + MediaQuery.of(ctx).viewInsets.bottom),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(color: HermesTheme.borderSubtle, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Routines 跨平台 Webhook', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                      Switch(
+                        value: enabled,
+                        activeColor: HermesTheme.accent,
+                        onChanged: (val) => setModalState(() => enabled = val),
+                      ),
+                    ],
+                  ),
+                  const Text('定时任务完成时，自动向外部团队协作平台广播执行简报。', style: TextStyle(fontSize: 11.5, color: HermesTheme.textDim)),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: tgToken,
+                    style: const TextStyle(fontSize: 12.5, color: HermesTheme.textMain),
+                    decoration: const InputDecoration(labelText: 'Telegram Bot Token', hintText: 'bot123456:ABC-DEF...'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: tgChatId,
+                    style: const TextStyle(fontSize: 12.5, color: HermesTheme.textMain),
+                    decoration: const InputDecoration(labelText: 'Telegram Chat ID', hintText: '-100xxxxxxxxx 或用户 ID'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: discord,
+                    style: const TextStyle(fontSize: 12.5, color: HermesTheme.textMain),
+                    decoration: const InputDecoration(labelText: 'Discord Webhook URL', hintText: 'https://discord.com/api/webhooks/...'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: slack,
+                    style: const TextStyle(fontSize: 12.5, color: HermesTheme.textMain),
+                    decoration: const InputDecoration(labelText: 'Slack Webhook URL', hintText: 'https://hooks.slack.com/services/...'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: custom,
+                    style: const TextStyle(fontSize: 12.5, color: HermesTheme.textMain),
+                    decoration: const InputDecoration(labelText: '通用自定义 Webhook URL', hintText: 'https://your-server.com/api/webhook'),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await WebhookService().dispatchTaskNotification(
+                              title: '测试自动化巡检任务',
+                              status: 'success',
+                              details: 'CPU: 12% | 内存: 3.2G/16G | 容器全部正常运行',
+                            );
+                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('测试 Webhook 已下发')));
+                          },
+                          child: const Text('发送测试通知'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () async {
+                            await _storage.saveWebhookConfig({
+                              'enabled': enabled,
+                              'telegramBotToken': tgToken.text.trim(),
+                              'telegramChatId': tgChatId.text.trim(),
+                              'discordWebhookUrl': discord.text.trim(),
+                              'slackWebhookUrl': slack.text.trim(),
+                              'customWebhookUrl': custom.text.trim(),
+                            });
+                            Navigator.pop(ctx);
+                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Webhook 配置已保存')));
+                          },
+                          style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
+                          child: const Text('保存配置'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _sendTestNotification() async {
@@ -336,12 +459,44 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
                 const SizedBox(height: 16),
 
                 // 2. 特工与工作区管控
-                _buildSectionHeader(Icons.smart_toy_rounded, '特工与工作区管控', '定时计划任务、常驻守护脚本与安全审批'),
+                _buildSectionHeader(Icons.smart_toy_rounded, '特工与工作区管控', '项目看板、定时计划任务、外部推送与安全审批'),
                 _buildCard([
+                  _buildNavTile(
+                    icon: Icons.dashboard_customize_outlined,
+                    title: '项目与特工任务看板',
+                    subtitle: '多特工流水线任务进度、待办排期与已完成归档',
+                    badge: '企业看板',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProjectsKanbanScreen(
+                            gateway: widget.gatewayService,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(color: HermesTheme.borderSubtle, height: 1),
+                  _buildNavTile(
+                    icon: Icons.query_stats_rounded,
+                    title: 'Token 用量与开销大盘',
+                    subtitle: '累计 Token 消耗分布、各模型占比与预估费用',
+                    badge: '算力分析',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const UsageSpendScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(color: HermesTheme.borderSubtle, height: 1),
                   _buildNavTile(
                     icon: Icons.terminal_rounded,
                     title: 'Agent 特工工作台',
-                    subtitle: '查看 Linux 系统常驻任务、Cron 定时脚本与工作区',
+                    subtitle: '查看 Linux 系统常驻任务、Cron 定时脚本与技能',
                     badge: '调度中枢',
                     onTap: () {
                       Navigator.push(
@@ -354,6 +509,14 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
                         ),
                       );
                     },
+                  ),
+                  const Divider(color: HermesTheme.borderSubtle, height: 1),
+                  _buildNavTile(
+                    icon: Icons.webhook_rounded,
+                    title: 'Routines 跨平台 Webhook 推送',
+                    subtitle: '定时自动化任务结果直推 Telegram / Discord / Slack',
+                    badge: '外部协同',
+                    onTap: _showWebhookSettingsDialog,
                   ),
                   const Divider(color: HermesTheme.borderSubtle, height: 1),
                   _buildSwitchTile(

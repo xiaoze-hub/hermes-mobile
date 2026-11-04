@@ -5,6 +5,7 @@ import '../../core/theme.dart';
 import '../../models/session.dart';
 import '../../services/hermes_gateway_service.dart';
 import '../settings/system_settings_screen.dart';
+import '../projects/projects_kanban_screen.dart';
 
 class SessionDrawer extends StatefulWidget {
   final HermesGatewayService gatewayService;
@@ -777,6 +778,47 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                 );
                               },
                             ),
+            ),
+
+            // 项目与任务看板快捷入口
+            Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF0F1424),
+                border: Border(top: BorderSide(color: HermesTheme.borderSubtle, width: 0.8)),
+              ),
+              child: ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: HermesTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: HermesTheme.borderSubtle),
+                  ),
+                  child: const Icon(Icons.dashboard_customize_outlined, size: 18, color: HermesTheme.accent),
+                ),
+                title: const Text('项目与特工任务看板',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                subtitle: const Text('多特工流水线 · 待办与已完成',
+                    style: TextStyle(fontSize: 10.5, color: HermesTheme.textDim)),
+                trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: HermesTheme.textDim),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ProjectsKanbanScreen(
+                        gateway: widget.gatewayService,
+                        onOpenSession: (id) {
+                          final session = _sessions.firstWhere((s) => s.id == id, orElse: () => HermesSession(id: id, title: '看板会话', updatedAt: DateTime.now()));
+                          widget.onSelectSession(session);
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
 
             // 抽屉底部：统一系统设置与控制中枢入口

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/project.dart';
+import '../models/kanban_task.dart';
 
 class GatewayConfig {
   final String serverUrl;
@@ -121,6 +123,159 @@ class HermesStorage {
       all[sessionId] = tags;
     }
     await prefs.setString('hermes_session_tags', jsonEncode(all));
+  }
+
+  // --- 项目工程 (Projects) ---
+  Future<List<HermesProject>> getProjects() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_projects_data');
+    if (raw == null || raw.isEmpty) {
+      return [
+        HermesProject(
+          id: 'proj_default',
+          name: '默认工作区',
+          description: '系统默认特工执行与日常运维项目',
+          colorValue: 0xFF6366F1,
+          createdAt: DateTime.now(),
+        ),
+      ];
+    }
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => HermesProject.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveProjects(List<HermesProject> projects) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonEncode(projects.map((p) => p.toJson()).toList());
+    await prefs.setString('hermes_projects_data', raw);
+  }
+
+  Future<void> saveProject(HermesProject project) async {
+    final projects = await getProjects();
+    final index = projects.indexWhere((p) => p.id == project.id);
+    if (index >= 0) {
+      projects[index] = project;
+    } else {
+      projects.add(project);
+    }
+    await saveProjects(projects);
+  }
+
+  Future<void> deleteProject(String id) async {
+    final projects = await getProjects();
+    projects.removeWhere((p) => p.id == id);
+    await saveProjects(projects);
+  }
+
+  // --- 看板任务 (Kanban Tasks) ---
+  Future<List<KanbanTask>> getKanbanTasks({String? projectId}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_kanban_tasks');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      final tasks = list.map((e) => KanbanTask.fromJson(e as Map<String, dynamic>)).toList();
+      if (projectId != null && projectId.isNotEmpty) {
+        return tasks.where((t) => t.projectId == projectId).toList();
+      }
+      return tasks;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveKanbanTasks(List<KanbanTask> tasks) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonEncode(tasks.map((t) => t.toJson()).toList());
+    await prefs.setString('hermes_kanban_tasks', raw);
+  }
+
+  Future<void> saveKanbanTask(KanbanTask task) async {
+    final tasks = await getKanbanTasks();
+    final index = tasks.indexWhere((t) => t.id == task.id);
+    if (index >= 0) {
+      tasks[index] = task;
+    } else {
+      tasks.add(task);
+    }
+    await saveKanbanTasks(tasks);
+  }
+
+  Future<void> deleteKanbanTask(String id) async {
+    final tasks = await getKanbanTasks();
+    tasks.removeWhere((t) => t.id == id);
+    await saveKanbanTasks(tasks);
+  }
+
+  // --- 跨平台 Webhook (Routines 推送) ---
+  Future<Map<String, dynamic>> getWebhookConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_webhook_config');
+    if (raw == null || raw.isEmpty) {
+      return {
+        'enabled': false,
+        'telegramBotToken': '',
+        'telegramChatId': '',
+        'discordWebhookUrl': '',
+        'slackWebhookUrl': '',
+        'customWebhookUrl': '',
+      };
+    }
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> saveWebhookConfig(Map<String, dynamic> config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('hermes_webhook_config', jsonEncode(config));
+  }
+
+  // --- Usage & Spend 统计 ---
+  Future<Map<String, dynamic>> getUsageStatistics() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_usage_stats');
+    if (raw == null || raw.isEmpty) {
+      return {
+        'totalPromptTokens': 0,
+        'totalCompletionTokens': 0,
+        'totalRequests': 0,
+        'models': <String, dynamic>{},
+      };
+    }
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> recordTokenUsage(String model, int promptTokens, int completionTokens) async {
+    final prefs = await SharedPreferences.getInstance();
+    final stats = await getUsageStatistics();
+    stats['totalPromptTokens'] = ((stats['totalPromptTokens'] as num?) ?? 0) + promptTokens;
+    stats['totalCompletionTokens'] = ((stats['totalCompletionTokens'] as num?) ?? 0) + completionTokens;
+    stats['totalRequests'] = ((stats['totalRequests'] as num?) ?? 0) + 1;
+
+    final models = (stats['models'] as Map<String, dynamic>?) ?? {};
+    final modelStats = (models[model] as Map<String, dynamic>?) ?? {
+      'promptTokens': 0,
+      'completionTokens': 0,
+      'requests': 0,
+    };
+    modelStats['promptTokens'] = ((modelStats['promptTokens'] as num?) ?? 0) + promptTokens;
+    modelStats['completionTokens'] = ((modelStats['completionTokens'] as num?) ?? 0) + completionTokens;
+    modelStats['requests'] = ((modelStats['requests'] as num?) ?? 0) + 1;
+    models[model] = modelStats;
+    stats['models'] = models;
+
+    await prefs.setString('hermes_usage_stats', jsonEncode(stats));
   }
 
   // --- 网关集群多节点配置 ---

@@ -18,6 +18,9 @@ import 'context_meter_chip.dart';
 import 'session_tab_strip.dart';
 import 'workspace_rail_drawer.dart';
 import '../settings/system_settings_screen.dart';
+import 'live_voice_screen.dart';
+import '../projects/projects_kanban_screen.dart';
+import '../settings/usage_spend_screen.dart';
 
 
 class ChatScreen extends StatefulWidget {
@@ -1322,6 +1325,40 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _openLiveVoice() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LiveVoiceScreen(
+          gateway: widget.gatewayService,
+          sessionId: _activeSession?.id ?? '',
+          currentModel: _currentModel,
+          onUserSpoke: (text) => _sendMessageWithAttachments(text, const []),
+        ),
+      ),
+    );
+  }
+
+  void _openProjectsKanban() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectsKanbanScreen(
+          gateway: widget.gatewayService,
+          onOpenSession: (sessionId) {
+            _loadOrRestoreSession();
+          },
+        ),
+      ),
+    );
+  }
+
+  void _openUsageSpend() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const UsageSpendScreen(),
+      ),
+    );
+  }
+
   void _showSessionInfoAndModelSheet() {
     showModalBottomSheet(
       context: context,
@@ -1485,6 +1522,87 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(height: 12),
               ],
 
+              // 企业级进阶功能矩阵 (Live Mode, Kanban, Usage)
+              Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openLiveVoice();
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: HermesTheme.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: HermesTheme.borderSubtle),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(Icons.graphic_eq_rounded, color: Color(0xFF38BDF8), size: 20),
+                            SizedBox(height: 4),
+                            Text('Live 实时语音', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openProjectsKanban();
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: HermesTheme.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: HermesTheme.borderSubtle),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(Icons.dashboard_customize_outlined, color: HermesTheme.accent, size: 20),
+                            SizedBox(height: 4),
+                            Text('项目任务看板', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openUsageSpend();
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: HermesTheme.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: HermesTheme.borderSubtle),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(Icons.query_stats_rounded, color: Color(0xFFC084FC), size: 20),
+                            SizedBox(height: 4),
+                            Text('算力开销大盘', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: HermesTheme.textMain)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
               // 控制台与清理动作
               Row(
                 children: [
@@ -1579,7 +1697,13 @@ class _ChatScreenState extends State<ChatScreen> {
             color: HermesTheme.surfaceElevated,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (val) {
-              if (val == 'workspace') {
+              if (val == 'live') {
+                _openLiveVoice();
+              } else if (val == 'kanban') {
+                _openProjectsKanban();
+              } else if (val == 'usage') {
+                _openUsageSpend();
+              } else if (val == 'workspace') {
                 _scaffoldKey.currentState?.openEndDrawer();
               } else if (val == 'model') {
                 _showModelPicker();
@@ -1607,6 +1731,44 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'live',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.graphic_eq_rounded, size: 16, color: Color(0xFF38BDF8)),
+                    SizedBox(width: 10),
+                    Text('Live Mode 实时拟人语音', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'kanban',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.dashboard_customize_outlined, size: 16, color: HermesTheme.accent),
+                    SizedBox(width: 10),
+                    Text('项目与特工任务看板', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'usage',
+                height: 38,
+                child: Row(
+                  children: [
+                    Icon(Icons.query_stats_rounded, size: 16, color: Color(0xFFC084FC)),
+                    SizedBox(width: 10),
+                    Text('Token 用量与开销大盘', style: TextStyle(fontSize: 13, color: HermesTheme.textMain)),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                enabled: false,
+                height: 1,
+                child: Divider(color: HermesTheme.borderSubtle, height: 1),
+              ),
               PopupMenuItem(
                 value: 'workspace',
                 height: 38,
@@ -2099,6 +2261,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onSend: _sendMessageWithAttachments,
               isStreaming: _isCurrentlyStreaming,
               onStop: _stopGeneration,
+              onOpenLiveVoice: _openLiveVoice,
             ),
           ),
         ],

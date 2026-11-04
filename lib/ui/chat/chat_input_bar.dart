@@ -21,6 +21,7 @@ class ChatInputBar extends StatefulWidget {
   final List<ChatPickedFile> draftAttachments;
   final ValueChanged<String>? onDraftTextChanged;
   final ValueChanged<List<ChatPickedFile>>? onDraftAttachmentsChanged;
+  final VoidCallback? onOpenLiveVoice;
 
   const ChatInputBar({
     super.key,
@@ -33,6 +34,7 @@ class ChatInputBar extends StatefulWidget {
     this.draftAttachments = const [],
     this.onDraftTextChanged,
     this.onDraftAttachmentsChanged,
+    this.onOpenLiveVoice,
   });
 
   @override
@@ -218,6 +220,30 @@ class _ChatInputBarState extends State<ChatInputBar> {
     setState(() {});
   }
 
+  Future<void> _takePhoto() async {
+    if (_uploading || _sending) return;
+    setState(() => _uploading = true);
+    try {
+      final result = await const MethodChannel('com.hermes.mobile/files')
+          .invokeMethod<Map<dynamic, dynamic>>('takePhoto');
+      if (result != null && mounted) {
+        final name = result['name']?.toString() ?? 'IMG_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final bytes = result['bytes'] as Uint8List;
+        final file = ChatPickedFile(name: name, bytes: bytes);
+        setState(() {
+          _attachments.add(file);
+        });
+        widget.onDraftAttachmentsChanged?.call(List.unmodifiable(_attachments));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('相机拍照失败：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   void _showActionSheet() {
     showModalBottomSheet(
       context: context,
@@ -249,15 +275,48 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     color: HermesTheme.cyan.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.attach_file_rounded, color: HermesTheme.cyan, size: 20),
+                  child: const Icon(Icons.camera_alt_rounded, color: HermesTheme.cyan, size: 20),
                 ),
-                title: const Text('上传图片或文件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                title: const Text('拍摄照片 (CameraX 原生取景)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                subtitle: const Text('直接拍照送入特工进行视觉多模态分析', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _takePhoto();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF38BDF8).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.attach_file_rounded, color: Color(0xFF38BDF8), size: 20),
+                ),
+                title: const Text('从相册或设备选择文件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
                 subtitle: const Text('支持代码、图片、日志、PDF (最大 15MB)', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickFiles();
                 },
               ),
+              if (widget.onOpenLiveVoice != null)
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: HermesTheme.primary.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.graphic_eq_rounded, color: HermesTheme.primaryLight, size: 20),
+                  ),
+                  title: const Text('进入 Live Mode 实时语音对话', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: HermesTheme.textMain)),
+                  subtitle: const Text('低延迟双工对答，像与真人交谈般流利流畅', style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onOpenLiveVoice?.call();
+                  },
+                ),
               ListTile(
                 leading: Container(
                   padding: const EdgeInsets.all(8),
@@ -540,16 +599,19 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     ),
                   ),
 
-                  // 语音听写按钮 (Mic)
+                  // 语音听写按钮 (Mic: 短按听写，长按进入 Live Mode)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
-                    child: IconButton(
-                      tooltip: _listening ? '正在听写...' : '语音听写输入',
-                      onPressed: widget.isConnected && !_listening && !_sending ? _toggleVoice : null,
-                      icon: Icon(
-                        _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
-                        size: 20,
-                        color: _listening ? HermesTheme.warning : HermesTheme.textMuted,
+                    child: GestureDetector(
+                      onLongPress: widget.isConnected ? widget.onOpenLiveVoice : null,
+                      child: IconButton(
+                        tooltip: _listening ? '正在听写...' : '轻按听写，长按进入 Live Mode 实时语音',
+                        onPressed: widget.isConnected && !_listening && !_sending ? _toggleVoice : null,
+                        icon: Icon(
+                          _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                          size: 20,
+                          color: _listening ? HermesTheme.warning : HermesTheme.textMuted,
+                        ),
                       ),
                     ),
                   ),
