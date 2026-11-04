@@ -1,0 +1,32 @@
+Analyzing hermes-mobile...                                      
+
+warning • Unused import: 'dart:convert' • lib/services/webhook_service.dart:1:8 • unused_import
+warning • The value of the field '_lastAgentResponse' isn't used • lib/ui/chat/live_voice_screen.dart:34:10 • unused_field
+  error • The named parameter 'text' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:145:42 • missing_required_argument
+  error • Too many positional arguments: 0 expected, but 1 found • lib/ui/chat/live_voice_screen.dart:146:9 • extra_positional_arguments_could_be_named
+  error • The method 'listen' isn't defined for the type 'Future' • lib/ui/chat/live_voice_screen.dart:148:9 • undefined_method
+   info • Use 'const' with the constructor to improve performance • lib/ui/chat/live_voice_screen.dart:423:32 • prefer_const_constructors
+  error • The argument type 'IconButton' can't be assigned to the parameter type 'ButtonStyle?'.  • lib/ui/chat/live_voice_screen.dart:423:32 • argument_type_not_assignable
+  error • The named parameter 'icon' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:423:32 • missing_required_argument
+  error • The named parameter 'onPressed' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:423:32 • missing_required_argument
+  error • The named parameter 'backgroundColor' isn't defined • lib/ui/chat/live_voice_screen.dart:424:27 • undefined_named_parameter
+  error • The named parameter 'minimumSize' isn't defined • lib/ui/chat/live_voice_screen.dart:425:27 • undefined_named_parameter
+  error • The argument type 'IconButton' can't be assigned to the parameter type 'ButtonStyle?'.  • lib/ui/chat/live_voice_screen.dart:434:32 • argument_type_not_assignable
+  error • The named parameter 'icon' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:434:32 • missing_required_argument
+  error • The named parameter 'onPressed' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:434:32 • missing_required_argument
+  error • The named parameter 'backgroundColor' isn't defined • lib/ui/chat/live_voice_screen.dart:435:27 • undefined_named_parameter
+  error • The named parameter 'foregroundColor' isn't defined • lib/ui/chat/live_voice_screen.dart:436:27 • undefined_named_parameter
+  error • The named parameter 'minimumSize' isn't defined • lib/ui/chat/live_voice_screen.dart:437:27 • undefined_named_parameter
+  error • The named parameter 'shape' isn't defined • lib/ui/chat/live_voice_screen.dart:438:27 • undefined_named_parameter
+   info • Use 'const' with the constructor to improve performance • lib/ui/chat/live_voice_screen.dart:456:32 • prefer_const_constructors
+  error • The argument type 'IconButton' can't be assigned to the parameter type 'ButtonStyle?'.  • lib/ui/chat/live_voice_screen.dart:456:32 • argument_type_not_assignable
+  error • The named parameter 'icon' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:456:32 • missing_required_argument
+  error • The named parameter 'onPressed' is required, but there's no corresponding argument • lib/ui/chat/live_voice_screen.dart:456:32 • missing_required_argument
+  error • The named parameter 'backgroundColor' isn't defined • lib/ui/chat/live_voice_screen.dart:457:27 • undefined_named_parameter
+  error • The named parameter 'minimumSize' isn't defined • lib/ui/chat/live_voice_screen.dart:458:27 • undefined_named_parameter
+   info • Use 'const' for final variables initialized to a constant value • lib/ui/projects/projects_kanban_screen.dart:177:5 • prefer_const_declarations
+   info • Use 'const' with the constructor to improve performance • lib/ui/projects/projects_kanban_screen.dart:303:13 • prefer_const_constructors
+   info • Statements in an if should be enclosed in a block • lib/ui/settings/agent_workspace_screen.dart:113:20 • curly_braces_in_flow_control_structures
+   info • Don't use 'BuildContext's across async gaps • lib/ui/settings/system_settings_screen.dart:231:43 • use_build_context_synchronously
+
+28 issues found. (ran in 11.6s)
