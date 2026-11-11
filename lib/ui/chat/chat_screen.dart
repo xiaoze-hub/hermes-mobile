@@ -1133,9 +1133,15 @@ class _ChatScreenState extends State<ChatScreen> {
     if (force && !_followLatest) setState(() => _followLatest = true);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (!_scrollController.hasClients) return;
+      // 列表为 reverse 布局，offset 0 即最新消息，位置精确且不受懒加载高度估算影响
+      final position = _scrollController.position;
+      if (position.pixels <= position.minScrollExtent) return;
+      if (position.pixels - position.minScrollExtent > 3000) {
+        _scrollController.jumpTo(position.minScrollExtent);
+      } else {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          position.minScrollExtent,
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeOutCubic,
         );
@@ -1947,7 +1953,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           )
                         : NotificationListener<UserScrollNotification>(
                             onNotification: (notification) {
-                              final follow = notification.metrics.extentAfter < 120;
+                              // 列表为 reverse 布局：offset 0 即为最新消息所在的底部
+                              final follow = notification.metrics.extentBefore < 120;
                               if (follow != _followLatest) {
                                 setState(() => _followLatest = follow);
                               }
@@ -1955,6 +1962,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             },
                             child: ListView.builder(
                               controller: _scrollController,
+                              // 反向布局：打开会话即锚定在最新消息，无需依赖估算高度滚动
+                              reverse: true,
                               padding: const EdgeInsets.only(
                                 left: 14,
                                 right: 14,
@@ -1962,7 +1971,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                 bottom: 150, // 避让输入栏和快捷芯片
                               ),
                               itemCount: _messages.length + (_hasOlder ? 1 : 0),
-                              itemBuilder: (context, index) {
+                              itemBuilder: (context, reversedIndex) {
+                                // reverse 模式下 reversedIndex 0 为最底部（最新），映射回正序索引
+                                final index = _messages.length + (_hasOlder ? 1 : 0) - 1 - reversedIndex;
                                 // 历史翻页头部
                                 if (_hasOlder && index == 0) {
                                   return Center(

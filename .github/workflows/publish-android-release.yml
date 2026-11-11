@@ -75,7 +75,7 @@ jobs:
               "buildNumber": int(os.environ["BUILD_NUMBER"]),
               "apkUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/latest/download/hermes-mobile.apk",
               "sha256": os.environ["SHA256"],
-              "notes": "1. Live Mode 全双工实时拟人语音：流体发光音球交互、低延迟双工对练与原生 TTS 语音播报，支持全自动双向对话循环与轻触打断。\n2. Projects & Kanban 任务看板：支持多特工流水线任务进度跟踪，直观管理待规划、执行中、待审批与已完成，一键跨入关联对话。\n3. Routines 跨平台 Webhook 推送：定时巡检任务完成即时推送至 Telegram、Discord 与 Slack 团队工作流。\n4. Usage & Spend 算力与开销大盘：实时透视 Token 累计消耗分布、各模型请求占比与预估费用。\n5. CameraX 原生直摄与暗黑秒开：支持拍照直接送入多模态模型；原生沉浸深色 Splash 消除冷启动白闪。\n6. Agent 特工工作台全面换装 16dp 黑曜石企业级设计规范。"
+              "notes": "1. 打开会话自动定位到最新消息：聊天列表改为底部锚定布局，进入任意会话即直达最新一条对话，无需手动下滑。\n2. 加载更早记录时阅读位置保持稳定，不再跳动。\n3. 「返回最新消息」按钮定位精确，不再停在半途。"
           }
           with open("update.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
