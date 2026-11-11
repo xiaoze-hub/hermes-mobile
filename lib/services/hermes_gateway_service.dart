@@ -559,7 +559,11 @@ class HermesGatewayService {
           mapped.addAll({
             'type': 'done',
             'content': payload['text'],
-            'error': payload['error']
+            'error': payload['error'],
+            'usage': payload['usage'],
+            'prompt_tokens': payload['prompt_tokens'] ?? payload['input_tokens'],
+            'completion_tokens':
+                payload['completion_tokens'] ?? payload['output_tokens'],
           });
           break;
         case 'error':

@@ -82,7 +82,6 @@ class _ActiveTasksBannerState extends State<ActiveTasksBanner>
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF111728).withOpacity(0.95),
         borderRadius: BorderRadius.circular(12),
@@ -95,106 +94,126 @@ class _ActiveTasksBannerState extends State<ActiveTasksBanner>
           ),
         ],
       ),
-      child: Row(
-        children: [
-          // 呼吸动画状态点
-          AnimatedBuilder(
-            animation: _pulseAnim,
-            builder: (context, _) => Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: accentColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: accentColor.withOpacity(0.7 * _pulseAnim.value),
-                    blurRadius: 6,
-                    spreadRadius: 2 * _pulseAnim.value,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          Icon(icon, size: 16, color: accentColor),
-          const SizedBox(width: 8),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: widget.onInspectTask != null
+              ? () => widget.onInspectTask!(primary)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Text(
-                      prefix,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: accentColor,
-                      ),
-                    ),
-                    if (count > 1) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: accentColor.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(4),
+                // 呼吸动画状态点
+                AnimatedBuilder(
+                  animation: _pulseAnim,
+                  builder: (context, _) => Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accentColor,
+                      boxShadow: [
+                        BoxShadow(
+                          color: accentColor.withOpacity(0.7 * _pulseAnim.value),
+                          blurRadius: 6,
+                          spreadRadius: 2 * _pulseAnim.value,
                         ),
-                        child: Text(
-                          '+$count 个',
-                          style: TextStyle(
-                              fontSize: 9,
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                Icon(icon, size: 16, color: accentColor),
+                const SizedBox(width: 8),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            prefix,
+                            style: TextStyle(
+                              fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: accentColor),
+                              color: accentColor,
+                            ),
+                          ),
+                          if (count > 1) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: accentColor.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '+$count 个',
+                                style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: accentColor),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 6),
+                          const Text(
+                            '点击查看日志 ▸',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: HermesTheme.textDim,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            primary.elapsedFormatted,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 10,
+                              color: HermesTheme.textDim,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        primary.detail.isNotEmpty ? primary.detail : primary.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: HermesTheme.textMain,
                         ),
                       ),
                     ],
-                    const Spacer(),
-                    Text(
-                      primary.elapsedFormatted,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 10,
-                        color: HermesTheme.textDim,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  primary.detail.isNotEmpty ? primary.detail : primary.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: HermesTheme.textMain,
                   ),
+                ),
+
+                const SizedBox(width: 8),
+
+                // 终止按钮
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: HermesTheme.danger,
+                    side: const BorderSide(color: HermesTheme.danger, width: 0.8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: const Size(40, 26),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: widget.onStopAll,
+                  child: const Text('终止', style: TextStyle(fontSize: 11)),
                 ),
               ],
             ),
           ),
-
-          const SizedBox(width: 8),
-
-          // 终止按钮
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: HermesTheme.danger,
-              side: const BorderSide(color: HermesTheme.danger, width: 0.8),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(40, 26),
-              visualDensity: VisualDensity.compact,
-            ),
-            onPressed: widget.onStopAll,
-            child: const Text('终止', style: TextStyle(fontSize: 11)),
-          ),
-        ],
+        ),
       ),
     );
   }

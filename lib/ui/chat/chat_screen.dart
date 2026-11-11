@@ -52,6 +52,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<Map<String, dynamic>> _approvals = [];
   final Set<String> _receivedApprovalIds = {};
   final List<InflightTaskInfo> _activeTasks = [];
+  final List<InflightTaskInfo> _taskHistory = [];
+  int _lastSentPromptChars = 0;
 
   final Set<String> _loadedDrafts = {};
   final Map<String, String> _drafts = {};
@@ -758,6 +760,262 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ==========================================
+  // 锁屏/后台常驻保活通知 + 自动 Token 记账 + 子特工实时日志抽屉
+  // ==========================================
+  Future<void> _syncOngoingTaskNotification() async {
+    try {
+      final notify = await _storage.getNotificationsEnabled();
+      if (!notify) return;
+
+      if (_activeTasks.isNotEmpty || _isCurrentlyStreaming) {
+        final sessionTitle = _activeSession?.title ?? 'Hermes Agent';
+        final primaryTask = _activeTasks.isNotEmpty
+            ? '${_activeTasks.first.name}: ${_activeTasks.first.detail}'
+            : '正在流式推理与生成回复...';
+        await const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<void>('startOngoingTaskNotification', {
+          'title': '⚡ $sessionTitle · 后台运行中',
+          'content': primaryTask.length > 90
+              ? '${primaryTask.substring(0, 90)}...'
+              : primaryTask,
+        });
+      } else {
+        await const MethodChannel('com.hermes.mobile/files')
+            .invokeMethod<void>('stopOngoingTaskNotification');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _recordTurnTokenUsage(
+    Map<String, dynamic> event,
+    String assistantContent,
+    String thinkingContent,
+  ) async {
+    try {
+      final modelName =
+          _currentModel.isEmpty ? 'hermes-default' : _currentModel;
+      int promptTokens = 0;
+      int completionTokens = 0;
+
+      final usage = event['usage'];
+      if (usage is Map) {
+        promptTokens = ((usage['prompt_tokens'] ??
+                    usage['input_tokens'] ??
+                    0) as num)
+            .toInt();
+        completionTokens = ((usage['completion_tokens'] ??
+                    usage['output_tokens'] ??
+                    0) as num)
+            .toInt();
+      } else {
+        if (event['prompt_tokens'] is num) {
+          promptTokens = (event['prompt_tokens'] as num).toInt();
+        }
+        if (event['completion_tokens'] is num) {
+          completionTokens = (event['completion_tokens'] as num).toInt();
+        }
+      }
+
+      if (promptTokens <= 0) {
+        promptTokens = (_lastSentPromptChars / 2.4).ceil().clamp(24, 128000);
+      }
+      if (completionTokens <= 0) {
+        final outChars = assistantContent.length + thinkingContent.length;
+        completionTokens = (outChars / 2.4).ceil().clamp(16, 128000);
+      }
+
+      await _storage.recordTokenUsage(modelName, promptTokens, completionTokens);
+    } catch (_) {}
+  }
+
+  void _showSubagentSwarmInspector([InflightTaskInfo? focusTask]) {
+    HapticFeedback.lightImpact();
+    final items = _taskHistory.isNotEmpty
+        ? _taskHistory
+        : List<InflightTaskInfo>.from(_activeTasks);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: HermesTheme.surfaceElevated,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.72,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: HermesTheme.borderSubtle,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.hub_rounded,
+                        color: Color(0xFFC084FC), size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '子智能体与后台任务实时监控舱',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: HermesTheme.textMain,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_activeTasks.isNotEmpty)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: HermesTheme.danger,
+                          side: const BorderSide(
+                              color: HermesTheme.danger, width: 0.8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _stopGeneration();
+                        },
+                        icon: const Icon(Icons.stop_rounded, size: 14),
+                        label: const Text('全部终止',
+                            style: TextStyle(fontSize: 11.5)),
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(color: HermesTheme.borderSubtle, height: 16),
+              Expanded(
+                child: items.isEmpty
+                    ? const Center(
+                        child: Text(
+                          '当前会话暂无子智能体或后台进程记录',
+                          style: TextStyle(
+                              fontSize: 13, color: HermesTheme.textDim),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                        itemCount: items.length,
+                        itemBuilder: (ctx, i) {
+                          final task = items[i];
+                          final isHighlighted =
+                              focusTask != null && task.id == focusTask.id;
+                          final statusColor = task.isCompleted
+                              ? HermesTheme.accent
+                              : const Color(0xFFC084FC);
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: HermesTheme.surface,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: isHighlighted
+                                    ? statusColor.withOpacity(0.6)
+                                    : HermesTheme.borderSubtle,
+                                width: isHighlighted ? 1.3 : 1.0,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 7, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: statusColor.withOpacity(0.14),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        task.isCompleted ? '已完成' : '运行中',
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: statusColor,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        task.name,
+                                        style: const TextStyle(
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: HermesTheme.textMain,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Text(
+                                      '耗时 ${task.elapsedFormatted}',
+                                      style: const TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        color: HermesTheme.textDim,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (task.detail.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    task.detail,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: HermesTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                                if (task.logs.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF090D16),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: HermesTheme.borderSubtle),
+                                    ),
+                                    child: SelectableText(
+                                      task.logs.join('\n'),
+                                      style: const TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11.5,
+                                        color: Color(0xFFE2E8F0),
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _notifyTaskCompleted([String? summary]) async {
     try {
       final haptic = await _storage.getHapticFeedbackEnabled();
@@ -909,25 +1167,42 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // 3. 处理子智能体独立流式事件
+    // 3. 处理子智能体独立流式事件 (并记录到子智能体实时日志池)
     if (type != null && type.startsWith('subagent.')) {
       final agentName = (event['agent'] ?? event['name'] ?? '子智能体').toString();
-      final content = (event['content'] ?? event['text'] ?? '').toString();
+      final content = (event['content'] ?? event['text'] ?? event['prompt'] ?? '').toString();
+      final taskId = 'subagent_$agentName';
       if (type == 'subagent.start') {
+        final task = InflightTaskInfo(
+          id: taskId,
+          name: agentName,
+          category: ToolCategory.subagent,
+          detail: content,
+          logs: ['[启动] 委派协同任务: $content'],
+        );
         setState(() {
-          _activeTasks.removeWhere((t) => t.id == 'subagent_$agentName');
-          _activeTasks.add(InflightTaskInfo(
-            id: 'subagent_$agentName',
-            name: agentName,
-            category: ToolCategory.subagent,
-            detail: content,
-          ));
+          _activeTasks.removeWhere((t) => t.id == taskId);
+          _activeTasks.add(task);
+          _taskHistory.removeWhere((t) => t.id == taskId);
+          _taskHistory.insert(0, task);
         });
+        _syncOngoingTaskNotification();
       } else if (type == 'subagent.complete') {
         setState(() {
-          _activeTasks.removeWhere((t) => t.id == 'subagent_$agentName');
+          for (final t in _taskHistory.where((t) => t.id == taskId)) {
+            if (content.isNotEmpty) t.logs.add('[完成] $content');
+            t.isCompleted = true;
+          }
+          _activeTasks.removeWhere((t) => t.id == taskId);
         });
+        _syncOngoingTaskNotification();
         _notifyTaskCompleted('子智能体 [$agentName] 协同任务已顺利完成。');
+      } else {
+        setState(() {
+          for (final t in _taskHistory.where((t) => t.id == taskId)) {
+            if (content.isNotEmpty) t.logs.add(content);
+          }
+        });
       }
       return;
     }
@@ -936,20 +1211,31 @@ class _ChatScreenState extends State<ChatScreen> {
     if (type != null && (type.startsWith('cron.') || type.startsWith('job.'))) {
       final jobName = (event['name'] ?? event['job_id'] ?? '定时任务').toString();
       final detail = (event['prompt'] ?? event['schedule'] ?? '').toString();
+      final taskId = 'cron_$jobName';
       if (type.contains('trigger') || type.contains('start')) {
+        final task = InflightTaskInfo(
+          id: taskId,
+          name: jobName,
+          category: ToolCategory.cron,
+          detail: detail,
+          logs: ['[触发] 计划任务执行: $detail'],
+        );
         setState(() {
-          _activeTasks.removeWhere((t) => t.id == 'cron_$jobName');
-          _activeTasks.add(InflightTaskInfo(
-            id: 'cron_$jobName',
-            name: jobName,
-            category: ToolCategory.cron,
-            detail: detail,
-          ));
+          _activeTasks.removeWhere((t) => t.id == taskId);
+          _activeTasks.add(task);
+          _taskHistory.removeWhere((t) => t.id == taskId);
+          _taskHistory.insert(0, task);
         });
+        _syncOngoingTaskNotification();
       } else if (type.contains('complete') || type.contains('finish')) {
         setState(() {
-          _activeTasks.removeWhere((t) => t.id == 'cron_$jobName');
+          for (final t in _taskHistory.where((t) => t.id == taskId)) {
+            t.logs.add('[完成] 计划任务已执行完毕');
+            t.isCompleted = true;
+          }
+          _activeTasks.removeWhere((t) => t.id == taskId);
         });
+        _syncOngoingTaskNotification();
         _notifyTaskCompleted('定时任务 [$jobName] 执行完毕。');
       }
       return;
@@ -960,8 +1246,13 @@ class _ChatScreenState extends State<ChatScreen> {
       final taskName = (event['name'] ?? event['task_id'] ?? event['command'] ?? '后台任务').toString();
       final resultSummary = (event['output'] ?? event['result'] ?? '已执行完成').toString();
       setState(() {
+        for (final t in _taskHistory.where((t) => t.id == event['task_id']?.toString() || t.name == taskName)) {
+          t.logs.add('[结果] $resultSummary');
+          t.isCompleted = true;
+        }
         _activeTasks.removeWhere((t) => t.id == event['task_id']?.toString() || t.name == taskName);
       });
+      _syncOngoingTaskNotification();
       _notifyTaskCompleted('[$taskName] ${_extractSummary(resultSummary)}');
       return;
     }
@@ -998,18 +1289,25 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         currentAssistant?.toolCalls.add(toolInfo);
 
+        final task = InflightTaskInfo(
+          id: toolId,
+          name: toolName,
+          category: toolInfo.category,
+          detail: toolInfo.humanActionSummary,
+          logs: ['[调用] ${toolInfo.humanActionSummary}'],
+        );
+        _taskHistory.removeWhere((t) => t.id == toolId);
+        _taskHistory.insert(0, task);
+        if (_taskHistory.length > 20) _taskHistory.removeLast();
+
         if (toolInfo.category == ToolCategory.daemon ||
             toolInfo.category == ToolCategory.subagent ||
             toolInfo.category == ToolCategory.cron ||
             args.contains('&')) {
           _activeTasks.removeWhere((t) => t.id == toolId);
-          _activeTasks.add(InflightTaskInfo(
-            id: toolId,
-            name: toolName,
-            category: toolInfo.category,
-            detail: toolInfo.arguments,
-          ));
+          _activeTasks.add(task);
         }
+        _syncOngoingTaskNotification();
       } else if (type == 'tool_end') {
         final toolId = event['tool_id']?.toString();
         final result = event['result']?.toString() ?? '';
@@ -1020,13 +1318,23 @@ class _ChatScreenState extends State<ChatScreen> {
             isRunning: false,
           );
         }
+        for (final t in _taskHistory.where((t) => t.id == toolId)) {
+          if (result.isNotEmpty) {
+            t.logs.add(result.length > 600 ? '${result.substring(0, 600)}...' : result);
+          }
+          t.isCompleted = true;
+        }
         _activeTasks.removeWhere((t) => t.id == toolId);
+        _syncOngoingTaskNotification();
       } else if (type == 'done' || type == 'message_end') {
         currentAssistant?.isStreaming = false;
         _activeTasks.clear();
+        _syncOngoingTaskNotification();
         final rawContent = currentAssistant?.content ?? '';
+        final rawThinking = currentAssistant?.thinking ?? '';
         final summary = _extractSummary(rawContent);
         _notifyTaskCompleted(summary);
+        _recordTurnTokenUsage(event, rawContent, rawThinking);
         final activeId = _activeSession?.id;
         if (activeId != null) {
           _storage.saveCachedSessionMessages(activeId, _messages).catchError((_) {});
@@ -1150,9 +1458,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _replyQuotes.remove(session.id);
+      _lastSentPromptChars = outgoingText.length;
       _messages.add(ChatMessage.user(visibleText, attachments: names));
       if (placeholder != null) _messages.add(placeholder);
     });
+    _syncOngoingTaskNotification();
     _storage.saveCachedSessionMessages(session.id, _messages).catchError((_) {});
 
     try {
@@ -1184,7 +1494,9 @@ class _ChatScreenState extends State<ChatScreen> {
           for (final msg in _messages.where((m) => m.isStreaming)) {
             msg.isStreaming = false;
           }
+          _activeTasks.clear();
         });
+        _syncOngoingTaskNotification();
       }
     } catch (e) {
       if (mounted) {
@@ -2430,6 +2742,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: ActiveTasksBanner(
                   tasks: _activeTasks,
                   onStopAll: _stopGeneration,
+                  onInspectTask: _showSubagentSwarmInspector,
                 ),
               ),
             ),

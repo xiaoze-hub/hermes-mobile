@@ -235,6 +235,8 @@ class InflightTaskInfo {
   final ToolCategory category;
   final String detail;
   final DateTime startedAt;
+  final List<String> logs;
+  bool isCompleted;
 
   InflightTaskInfo({
     required this.id,
@@ -242,7 +244,10 @@ class InflightTaskInfo {
     required this.category,
     required this.detail,
     DateTime? startedAt,
-  }) : startedAt = startedAt ?? DateTime.now();
+    List<String>? logs,
+    this.isCompleted = false,
+  })  : startedAt = startedAt ?? DateTime.now(),
+        logs = logs ?? [];
 
   String get elapsedFormatted {
     final diff = DateTime.now().difference(startedAt);

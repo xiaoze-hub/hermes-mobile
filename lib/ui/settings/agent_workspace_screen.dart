@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../core/storage.dart';
 import '../../core/theme.dart';
 import '../../services/hermes_gateway_service.dart';
 
@@ -12,13 +14,16 @@ class AgentWorkspaceScreen extends StatefulWidget {
 }
 
 class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 4, vsync: this);
+  late final TabController _tabs = TabController(length: 5, vsync: this);
+  final HermesStorage _storage = HermesStorage();
   bool _busy = false;
   String? _error;
   List<Map<String, dynamic>> _toolsets = [];
   List<Map<String, dynamic>> _jobs = [];
   Map<String, dynamic> _context = {};
   Map<String, dynamic> _skills = {};
+  List<Map<String, dynamic>> _memories = [];
+  String _memoryFilter = 'all';
   final _skillQuery = TextEditingController();
 
   @override
@@ -53,6 +58,11 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
   }
 
   Future<void> _refresh() async {
+    final localMemories = await _storage.getMemoryEntries();
+    if (mounted) {
+      setState(() => _memories = localMemories);
+    }
+
     if (!widget.gateway.supportsJsonRpc || widget.sessionId.isEmpty) {
       setState(() => _error = '当前会话未连接到支持 JSON-RPC 的 Hermes 网关。请升级网关并重新连接后使用 Agent 管理功能。');
       return;
@@ -66,6 +76,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
       _fetchCronJobs(),
       _rpc('session.context_breakdown', {'session_id': widget.sessionId}),
       _rpc('skills.manage', {'action': 'list'}),
+      _fetchRemoteMemories(),
     ].map((future) async {
       try {
         return await future;
@@ -92,10 +103,196 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
       _jobs = extractedJobs;
       _context = results[2] is Map ? Map<String, dynamic>.from(results[2] as Map) : {};
       _skills = results[3] is Map ? Map<String, dynamic>.from(results[3] as Map) : {};
-      final errors = results.whereType<Map>().map((r) => r['_error']).whereType<String>().toList();
-      if (errors.length == results.length) _error = '此网关版本尚未开放 Agent 管理方法。\n${errors.first}';
+      final remoteMem = results[4];
+      if (remoteMem is List && remoteMem.isNotEmpty) {
+        _memories = List<Map<String, dynamic>>.from(remoteMem.whereType<Map>());
+        _storage.saveMemoryEntries(_memories).catchError((_) {});
+      }
+      final errors = results.take(4).whereType<Map>().map((r) => r['_error']).whereType<String>().toList();
+      if (errors.length == 4) _error = '此网关版本尚未开放 Agent 管理方法。\n${errors.first}';
       _busy = false;
     });
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchRemoteMemories() async {
+    try {
+      final res = await _rpc('memory.manage', {'action': 'list'});
+      if (res is Map && res['entries'] is List) {
+        return (res['entries'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (res is List) {
+        return res
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  Future<void> _addOrEditMemory({Map<String, dynamic>? existing}) async {
+    String selectedTarget = existing?['target']?.toString() ?? 'memory';
+    final controller = TextEditingController(
+      text: existing?['content']?.toString() ?? '',
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          backgroundColor: HermesTheme.surfaceElevated,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            existing == null ? '新增长期记忆条目' : '编辑长期记忆条目',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: HermesTheme.textMain,
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '存储目标文件',
+                  style: TextStyle(fontSize: 12, color: HermesTheme.textMuted),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('MEMORY.md (环境记忆)'),
+                        selected: selectedTarget == 'memory',
+                        onSelected: (_) =>
+                            setModalState(() => selectedTarget = 'memory'),
+                        selectedColor: HermesTheme.primary.withOpacity(0.25),
+                        labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: selectedTarget == 'memory'
+                              ? HermesTheme.primaryLight
+                              : HermesTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('USER.md (用户画像)'),
+                        selected: selectedTarget == 'user',
+                        onSelected: (_) =>
+                            setModalState(() => selectedTarget = 'user'),
+                        selectedColor: HermesTheme.accent.withOpacity(0.2),
+                        labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: selectedTarget == 'user'
+                              ? HermesTheme.accent
+                              : HermesTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  minLines: 3,
+                  maxLines: 6,
+                  style: const TextStyle(fontSize: 13, color: HermesTheme.textMain),
+                  decoration: const InputDecoration(
+                    labelText: '记忆内容',
+                    hintText: '如: 生产数据库运行在 10.0.1.15:5432，备份目录为 /data/backup...',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: HermesTheme.primary),
+              child: const Text('保存并同步'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final text = controller.text.trim();
+    controller.dispose();
+    if (confirmed != true || text.isEmpty) return;
+
+    final updatedList = List<Map<String, dynamic>>.from(_memories);
+    if (existing != null) {
+      final idx = updatedList.indexWhere((e) => e['id'] == existing['id']);
+      final newEntry = {
+        ...existing,
+        'target': selectedTarget,
+        'content': text,
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      if (idx >= 0) {
+        updatedList[idx] = newEntry;
+      } else {
+        updatedList.insert(0, newEntry);
+      }
+      try {
+        await _rpc('memory.manage', {
+          'action': 'replace',
+          'target': selectedTarget,
+          'old_text': existing['content'],
+          'content': text,
+        });
+      } catch (_) {}
+    } else {
+      final newEntry = {
+        'id': 'mem_${DateTime.now().millisecondsSinceEpoch}',
+        'target': selectedTarget,
+        'content': text,
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      updatedList.insert(0, newEntry);
+      try {
+        await _rpc('memory.manage', {
+          'action': 'add',
+          'target': selectedTarget,
+          'content': text,
+        });
+      } catch (_) {}
+    }
+
+    await _storage.saveMemoryEntries(updatedList);
+    if (mounted) {
+      HapticFeedback.lightImpact();
+      setState(() => _memories = updatedList);
+    }
+  }
+
+  Future<void> _deleteMemory(Map<String, dynamic> entry) async {
+    final updated = List<Map<String, dynamic>>.from(_memories)
+      ..removeWhere((e) => e['id'] == entry['id']);
+    try {
+      await _rpc('memory.manage', {
+        'action': 'remove',
+        'target': entry['target'] ?? 'memory',
+        'old_text': entry['content'],
+      });
+    } catch (_) {}
+    await _storage.saveMemoryEntries(updated);
+    if (mounted) {
+      HapticFeedback.lightImpact();
+      setState(() => _memories = updated);
+    }
   }
 
   Future<void> _configureTool(Map<String, dynamic> row, bool enabled) async {
@@ -217,6 +414,8 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
         ],
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           indicatorColor: HermesTheme.primary,
           indicatorWeight: 2.5,
           labelColor: HermesTheme.primaryLight,
@@ -224,45 +423,23 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
           labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
           tabs: const [
             Tab(text: '工具箱 & MCP'),
+            Tab(text: '长期记忆 (Memory)'),
             Tab(text: '技能扩展'),
             Tab(text: '定时任务 (Cron)'),
             Tab(text: '上下文容量'),
           ],
         ),
       ),
-      body: _error != null && _toolsets.isEmpty && _jobs.isEmpty && _context.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.extension_off_outlined, size: 48, color: HermesTheme.borderHighlight),
-                    const SizedBox(height: 16),
-                    Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: HermesTheme.textMuted, fontSize: 13)),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: _refresh,
-                      icon: const Icon(Icons.refresh_rounded, size: 16),
-                      label: const Text('重新连接并重试'),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: HermesTheme.borderSubtle),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : TabBarView(
-              controller: _tabs,
-              children: [
-                _toolsView(),
-                _skillsView(),
-                _cronView(),
-                _contextView(),
-              ],
-            ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          _toolsView(),
+          _memoryView(),
+          _skillsView(),
+          _cronView(),
+          _contextView(),
+        ],
+      ),
     );
   }
 
@@ -619,6 +796,152 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
               )),
         ],
         if (max == 0) _empty('暂时无法读取上下文统计。此方法需要较新的 Hermes 网关，或当前 Agent 会话尚未产生对话历史。'),
+      ],
+    );
+  }
+
+  Widget _memoryView() {
+    final filtered = _memoryFilter == 'all'
+        ? _memories
+        : _memories.where((m) => (m['target'] ?? 'memory') == _memoryFilter).toList();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Hermes 跨会话长期记忆库',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: HermesTheme.textMain)),
+                  SizedBox(height: 2),
+                  Text('可视化管理 MEMORY.md (环境认知) 与 USER.md (个人偏好)',
+                      style: TextStyle(fontSize: 11, color: HermesTheme.textDim)),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: () => _addOrEditMemory(),
+              style: FilledButton.styleFrom(
+                backgroundColor: HermesTheme.primary,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('新增记忆', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          children: [
+            ChoiceChip(
+              label: const Text('全部记忆'),
+              selected: _memoryFilter == 'all',
+              onSelected: (_) => setState(() => _memoryFilter = 'all'),
+              visualDensity: VisualDensity.compact,
+            ),
+            ChoiceChip(
+              label: const Text('MEMORY.md · 环境经验'),
+              selected: _memoryFilter == 'memory',
+              onSelected: (_) => setState(() => _memoryFilter = 'memory'),
+              visualDensity: VisualDensity.compact,
+            ),
+            ChoiceChip(
+              label: const Text('USER.md · 用户画像'),
+              selected: _memoryFilter == 'user',
+              onSelected: (_) => setState(() => _memoryFilter = 'user'),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (filtered.isEmpty)
+          _empty('暂无对应类别的长期记忆条目，点击右上角「新增记忆」添加。'),
+        ...filtered.map((item) {
+          final isUser = (item['target'] ?? 'memory') == 'user';
+          final badgeColor =
+              isUser ? HermesTheme.accent : HermesTheme.primaryLight;
+          final badgeLabel = isUser ? 'USER.md · 用户画像' : 'MEMORY.md · 环境经验';
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: HermesTheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: HermesTheme.borderSubtle),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isUser
+                                ? Icons.person_outline_rounded
+                                : Icons.psychology_rounded,
+                            size: 13,
+                            color: badgeColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            badgeLabel,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                              color: badgeColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined,
+                          size: 16, color: HermesTheme.textMuted),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: '编辑条目',
+                      onPressed: () => _addOrEditMemory(existing: item),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded,
+                          size: 16, color: HermesTheme.danger),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: '删除条目',
+                      onPressed: () => _deleteMemory(item),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  (item['content'] ?? '').toString(),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: HermesTheme.textMain,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
       ],
     );
   }

@@ -20,6 +20,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.os.PowerManager
 import android.os.Vibrator
 import android.os.VibrationEffect
 import androidx.core.app.NotificationManagerCompat
@@ -51,6 +52,7 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     private var ttsReady: Boolean = false
+    private var taskWakeLock: PowerManager.WakeLock? = null
 
     private val ioExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
         Thread(runnable).apply {
@@ -77,6 +79,27 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
                     val content = call.argument<String>("content") ?: ""
                     val id = call.argument<Int>("id") ?: 1001
                     showNotification(title, content, id)
+                    result.success(true)
+                }
+                "startOngoingTaskNotification" -> {
+                    val title = call.argument<String>("title") ?: "⚡ Hermes 特工后台运行中"
+                    val content = call.argument<String>("content") ?: "正在执行任务指令..."
+                    startOngoingTask(title, content)
+                    result.success(true)
+                }
+                "stopOngoingTaskNotification" -> {
+                    stopOngoingTask()
+                    result.success(true)
+                }
+                "shareText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    if (text.isNotEmpty()) {
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            putExtra(Intent.EXTRA_TEXT, text)
+                            type = "text/plain"
+                        }
+                        startActivity(Intent.createChooser(sendIntent, "分享对话内容"))
+                    }
                     result.success(true)
                 }
                 "requestNotificationPermission" -> {
@@ -385,6 +408,77 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
         notificationManager.notify(notificationId, notification)
     }
 
+    private fun startOngoingTask(title: String, content: String) {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (taskWakeLock == null && pm != null) {
+                taskWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HermesMobile::AgentTaskWakeLock").apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (taskWakeLock?.isHeld == false) {
+                taskWakeLock?.acquire(15 * 60 * 1000L) // 最长 15 分钟安全保活锁
+            }
+        } catch (_: Exception) {}
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+        }
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val ongoingChannelId = "hermes_ongoing_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                ongoingChannelId,
+                "Hermes 后台常驻执行状态",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "保持特工任务在锁屏或切后台时不断连并实时展示执行进度"
+                setShowBadge(false)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            1999,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+        val iconRes = if (applicationInfo.icon != 0) applicationInfo.icon else R.mipmap.ic_launcher
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(this, ongoingChannelId)
+        } else {
+            @Suppress("DEPRECATION")
+            android.app.Notification.Builder(this)
+        }
+        val notification = builder
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(iconRes)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        notificationManager.notify(1999, notification)
+    }
+
+    private fun stopOngoingTask() {
+        try {
+            if (taskWakeLock?.isHeld == true) {
+                taskWakeLock?.release()
+            }
+        } catch (_: Exception) {}
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            notificationManager?.cancel(1999)
+        } catch (_: Exception) {}
+    }
+
     private fun triggerVibration(durationMs: Long = 80L) {
         val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -474,6 +568,7 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        stopOngoingTask()
         destroySpeechRecognizer()
         speechResult?.error("activity_closed", "语音输入已关闭", null)
         speechResult = null

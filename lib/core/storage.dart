@@ -407,4 +407,40 @@ class HermesStorage {
     }
     await prefs.setStringList('hermes_msg_cache_lru', keys);
   }
+
+  // --- Hermes 长期记忆库 (MEMORY.md & USER.md) 本地镜像与持久化 ---
+  Future<List<Map<String, dynamic>>> getMemoryEntries() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_memory_entries');
+    if (raw == null || raw.isEmpty) {
+      return [
+        {
+          'id': 'mem_default_1',
+          'target': 'memory',
+          'content': 'Linux 生产环境默认使用 systemd 与 Docker Compose 管理容器服务。',
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+        {
+          'id': 'mem_default_2',
+          'target': 'user',
+          'content': '偏好简洁直接的中文技术报告，执行高危删除或重启前需先汇报影响面。',
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      ];
+    }
+    try {
+      final list = jsonDecode(raw) as List;
+      return list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveMemoryEntries(List<Map<String, dynamic>> entries) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('hermes_memory_entries', jsonEncode(entries));
+  }
 }
