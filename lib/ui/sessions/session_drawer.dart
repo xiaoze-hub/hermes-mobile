@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/storage.dart';
 import '../../core/theme.dart';
 import '../../models/session.dart';
@@ -564,59 +565,126 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                     color: HermesTheme.textDim, fontSize: 13),
                               ),
                             )
-                          : ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
-                              itemCount: visibleRows.length,
-                              itemBuilder: (context, index) {
-                                final row = visibleRows[index];
+                          : RefreshIndicator(
+                              color: HermesTheme.accent,
+                              backgroundColor: HermesTheme.surfaceElevated,
+                              onRefresh: _loadSessions,
+                              child: ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
+                                itemCount: visibleRows.length,
+                                itemBuilder: (context, index) {
+                                  final row = visibleRows[index];
 
-                                // 日期或置顶分组标签
-                                if (row.section != null) {
-                                  final isPinnedSection =
-                                      row.section!.contains('置顶');
-                                  return Padding(
-                                    padding:
-                                        const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                                    child: Text(
-                                      row.section!,
-                                      style: TextStyle(
-                                        color: isPinnedSection
-                                            ? const Color(0xFFFBBF24)
-                                            : HermesTheme.textDim,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.3,
+                                  // 日期或置顶分组标签
+                                  if (row.section != null) {
+                                    final isPinnedSection =
+                                        row.section!.contains('置顶');
+                                    return Padding(
+                                      padding:
+                                          const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                                      child: Text(
+                                        row.section!,
+                                        style: TextStyle(
+                                          color: isPinnedSection
+                                              ? const Color(0xFFFBBF24)
+                                              : HermesTheme.textDim,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 0.3,
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  final session = row.session!;
+                                  final isSelected =
+                                      session.id == widget.activeSessionId;
+                                  final isPinned =
+                                      _pinnedIds.contains(session.id);
+                                  final tags = _sessionTags[session.id] ?? [];
+
+                                  return Dismissible(
+                                    key: ValueKey('drawer_session_${session.id}'),
+                                    background: Container(
+                                      margin: const EdgeInsets.only(bottom: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                                      alignment: Alignment.centerLeft,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFBBF24).withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.push_pin_rounded,
+                                              size: 16, color: Color(0xFFFBBF24)),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            isPinned ? '取消置顶' : '置顶会话',
+                                            style: const TextStyle(
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFFFBBF24),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  );
-                                }
-
-                                final session = row.session!;
-                                final isSelected =
-                                    session.id == widget.activeSessionId;
-                                final isPinned =
-                                    _pinnedIds.contains(session.id);
-                                final tags = _sessionTags[session.id] ?? [];
-
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 4),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? HermesTheme.surfaceLight
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? HermesTheme.primary.withOpacity(0.5)
-                                          : Colors.transparent,
-                                      width: 1,
+                                    secondaryBackground: Container(
+                                      margin: const EdgeInsets.only(bottom: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                                      alignment: Alignment.centerRight,
+                                      decoration: BoxDecoration(
+                                        color: HermesTheme.danger.withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            '删除',
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: HermesTheme.danger,
+                                            ),
+                                          ),
+                                          SizedBox(width: 6),
+                                          Icon(Icons.delete_outline_rounded,
+                                              size: 16, color: HermesTheme.danger),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  child: ListTile(
-                                    dense: true,
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(10)),
+                                    confirmDismiss: (direction) async {
+                                      HapticFeedback.lightImpact();
+                                      if (direction == DismissDirection.startToEnd) {
+                                        await _togglePin(session);
+                                        return false;
+                                      } else {
+                                        await _deleteSession(session);
+                                        return false;
+                                      }
+                                    },
+                                    child: Container(
+                                      margin: const EdgeInsets.only(bottom: 4),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? HermesTheme.surfaceLight
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? HermesTheme.primary.withOpacity(0.5)
+                                              : Colors.transparent,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: ListTile(
+                                        dense: true,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10)),
                                     contentPadding:
                                         const EdgeInsets.only(left: 10, right: 4),
                                     leading: isPinned
@@ -771,13 +839,16 @@ class _SessionDrawerState extends State<SessionDrawer> {
                                       ],
                                     ),
                                     onTap: () {
+                                      HapticFeedback.selectionClick();
                                       Navigator.of(context).pop();
                                       widget.onSelectSession(session);
                                     },
                                   ),
-                                );
-                              },
-                            ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
             ),
 
             // 项目与任务看板快捷入口

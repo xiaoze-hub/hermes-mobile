@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../core/storage.dart';
 import '../../core/theme.dart';
 import '../../models/chat_message.dart';
@@ -17,6 +16,7 @@ import 'active_tasks_banner.dart';
 import 'context_meter_chip.dart';
 import 'session_tab_strip.dart';
 import 'workspace_rail_drawer.dart';
+import 'markdown_code_builder.dart';
 import '../settings/system_settings_screen.dart';
 import 'live_voice_screen.dart';
 import '../projects/projects_kanban_screen.dart';
@@ -57,6 +57,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, String> _drafts = {};
   final Map<String, List<ChatPickedFile>> _draftAttachments = {};
   final Map<String, Future<void>> _draftWrites = {};
+  final Map<String, String> _replyQuotes = {};
+  final Map<String, Uint8List> _imageAttachmentBytes = {};
+
+  // 流式输出帧率节流缓冲器 (24ms 合并刷新，保障 60fps 滑动与防发热)
+  String _pendingThoughtChunk = '';
+  String _pendingContentChunk = '';
+  Timer? _streamFlushTimer;
 
   StreamSubscription? _statusSub;
   StreamSubscription? _streamSub;
@@ -100,6 +107,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _streamFlushTimer?.cancel();
     _statusSub?.cancel();
     _streamSub?.cancel();
     _scrollController.dispose();
@@ -392,6 +400,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _switchSession(HermesSession session) {
+    _streamFlushTimer?.cancel();
+    _streamFlushTimer = null;
+    _pendingThoughtChunk = '';
+    _pendingContentChunk = '';
     setState(() {
       _activeSession = session;
       if (!_openTabs.any((t) => t.id == session.id)) {
@@ -638,16 +650,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ==========================================
-  // 历史消息与翻页
+  // 历史消息与翻页 (支持本地秒开缓存 Stale-While-Revalidate)
   // ==========================================
   Future<void> _loadSessionHistory(String sessionId) async {
-    setState(() {
-      _loadingHistory = true;
-      _loadHistoryError = null;
-    });
-
     _loadPendingApprovals();
 
+    // 1. 优先读取本地秒开缓存，实现切换会话 0ms 瞬时展现
+    final cached = await _storage.getCachedSessionMessages(sessionId);
+    if (!mounted || _activeSession?.id != sessionId) return;
+    if (cached.isNotEmpty) {
+      setState(() {
+        _messages.clear();
+        _messages.addAll(cached);
+        _loadingHistory = false;
+        _loadHistoryError = null;
+      });
+      _scrollToBottom(force: true);
+    } else {
+      setState(() {
+        _loadingHistory = true;
+        _loadHistoryError = null;
+      });
+    }
+
+    // 2. 后台拉取网关最新全量消息并无感刷新与持久化缓存
     try {
       final rawMessages = await widget.gatewayService.getSessionMessages(sessionId);
       if (!mounted || _activeSession?.id != sessionId) return;
@@ -682,15 +708,20 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.clear();
         _messages.addAll(parsedList);
         _loadingHistory = false;
+        _loadHistoryError = null;
         _hasOlder = rawMessages.length >= 100;
       });
 
+      _storage.saveCachedSessionMessages(sessionId, parsedList).catchError((_) {});
       _scrollToBottom(force: true);
     } catch (e) {
       if (mounted) {
         setState(() {
           _loadingHistory = false;
-          _loadHistoryError = "获取历史失败: $e";
+          // 若已有本地缓存则保留展示，仅在无缓存时展示错误页
+          if (_messages.isEmpty) {
+            _loadHistoryError = "获取历史失败: $e";
+          }
         });
       }
     }
@@ -935,19 +966,27 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // 6. 思考与正文增量 Token 走 24ms 帧率缓冲池，避免高频单字符触发全页重排掉帧
+    if (type == 'thought' || type == 'thinking') {
+      _pendingThoughtChunk += event['content']?.toString() ?? '';
+      _scheduleStreamFlush();
+      return;
+    } else if (type == 'content' || type == 'chunk') {
+      _pendingContentChunk += event['content']?.toString() ?? '';
+      _scheduleStreamFlush();
+      return;
+    }
+
+    // 工具事件或结束事件到达前，先立即刷出缓冲区中的文本，严格保证时序
+    _flushPendingStreamChunks();
+
     setState(() {
       ChatMessage? currentAssistant;
       if (_messages.isNotEmpty && _messages.last.role == MessageRole.assistant && _messages.last.isStreaming) {
         currentAssistant = _messages.last;
       }
 
-      if (type == 'thought' || type == 'thinking') {
-        final text = event['content']?.toString() ?? '';
-        currentAssistant?.thinking += text;
-      } else if (type == 'content' || type == 'chunk') {
-        final text = event['content']?.toString() ?? '';
-        currentAssistant?.content += text;
-      } else if (type == 'tool_start') {
+      if (type == 'tool_start') {
         final toolName = event['tool_name']?.toString() ?? '系统工具';
         final toolId = event['tool_id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString();
         final args = event['arguments']?.toString() ?? '';
@@ -988,10 +1027,43 @@ class _ChatScreenState extends State<ChatScreen> {
         final rawContent = currentAssistant?.content ?? '';
         final summary = _extractSummary(rawContent);
         _notifyTaskCompleted(summary);
+        final activeId = _activeSession?.id;
+        if (activeId != null) {
+          _storage.saveCachedSessionMessages(activeId, _messages).catchError((_) {});
+        }
       }
     });
 
     _scrollToBottom();
+  }
+
+  void _scheduleStreamFlush() {
+    if (_streamFlushTimer?.isActive ?? false) return;
+    _streamFlushTimer = Timer(const Duration(milliseconds: 24), () {
+      if (!mounted) return;
+      _flushPendingStreamChunks();
+      _scrollToBottom();
+    });
+  }
+
+  void _flushPendingStreamChunks() {
+    _streamFlushTimer?.cancel();
+    _streamFlushTimer = null;
+    if (_pendingThoughtChunk.isEmpty && _pendingContentChunk.isEmpty) return;
+
+    final thought = _pendingThoughtChunk;
+    final content = _pendingContentChunk;
+    _pendingThoughtChunk = '';
+    _pendingContentChunk = '';
+
+    setState(() {
+      if (_messages.isNotEmpty &&
+          _messages.last.role == MessageRole.assistant &&
+          _messages.last.isStreaming) {
+        if (thought.isNotEmpty) _messages.last.thinking += thought;
+        if (content.isNotEmpty) _messages.last.content += content;
+      }
+    });
   }
 
   // ==========================================
@@ -1004,8 +1076,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (bytes.length > 15 * 1024 * 1024) {
         throw StateError('${file.name} 超过 15 MB 上传限制');
       }
-      final encoded = await compute(base64Encode, bytes);
       final ext = file.extension;
+      if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'].contains(ext)) {
+        _imageAttachmentBytes[file.name] = bytes;
+      }
+      final encoded = await compute(base64Encode, bytes);
 
       if (ext == 'pdf') {
         final result = await widget.gatewayService.attachPdf(
@@ -1059,7 +1134,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || _activeSession?.id != session.id) return false;
 
     final names = attachments.map((f) => f.name).toList();
-    final visibleText = text.trim().isEmpty && names.isNotEmpty ? '请查看并分析这些附件。' : text;
+    final quote = _replyQuotes[session.id]?.trim();
+    final baseText = text.trim().isEmpty && names.isNotEmpty ? '请查看并分析这些附件。' : text;
+    final visibleText = (quote != null && quote.isNotEmpty)
+        ? '> ${quote.replaceAll('\n', '\n> ')}\n\n$baseText'
+        : baseText;
     final outgoingText = [
       visibleText,
       if (names.isNotEmpty) '附件: ${names.join('、')}',
@@ -1070,9 +1149,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final placeholder = alreadyRunning ? null : ChatMessage.assistant(isStreaming: true);
 
     setState(() {
+      _replyQuotes.remove(session.id);
       _messages.add(ChatMessage.user(visibleText, attachments: names));
       if (placeholder != null) _messages.add(placeholder);
     });
+    _storage.saveCachedSessionMessages(session.id, _messages).catchError((_) {});
 
     try {
       await widget.gatewayService.sendMessage(sessionId: session.id, text: outgoingText);
@@ -1652,6 +1733,150 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildEmptyWelcomeState() {
+    final quickCards = <({IconData icon, Color color, String title, String subtitle, VoidCallback onTap})>[
+      (
+        icon: Icons.monitor_heart_rounded,
+        color: HermesTheme.accent,
+        title: '服务器健康巡检',
+        subtitle: 'CPU / 内存 / 磁盘 / 负载全景扫描',
+        onTap: () => _sendMessageWithAttachments(
+              '请执行一次全面的 Linux 服务器健康巡检，检查 CPU 负载、内存余量、磁盘占用以及异常系统服务，并给出简明诊断报告。',
+              const [],
+            ),
+      ),
+      (
+        icon: Icons.layers_rounded,
+        color: const Color(0xFF38BDF8),
+        title: '容器与服务诊断',
+        subtitle: '排查 Docker 容器状态与异常日志',
+        onTap: () => _sendMessageWithAttachments(
+              '请检查当前服务器 Docker 容器与核心 systemd 服务运行状态，若有异常重启或错误日志请标出原因。',
+              const [],
+            ),
+      ),
+      (
+        icon: Icons.developer_board_rounded,
+        color: HermesTheme.primaryLight,
+        title: '工作区控制台',
+        subtitle: '浏览远程文件树、终端与产出工件',
+        onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+      ),
+      (
+        icon: Icons.graphic_eq_rounded,
+        color: const Color(0xFFC084FC),
+        title: 'Live 实时语音',
+        subtitle: '开启全双工拟人语音特工对话',
+        onTap: _openLiveVoice,
+      ),
+    ];
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 160),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                gradient: HermesTheme.assistantBubbleGradient,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: HermesTheme.border),
+                boxShadow: const [HermesTheme.primaryGlow],
+              ),
+              child: const Icon(Icons.auto_awesome_rounded,
+                  size: 28, color: HermesTheme.accent),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              "Hermes Agent 已就绪",
+              style: TextStyle(
+                color: HermesTheme.textMain,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              "点击下方场景卡片即刻启动，或直接输入指令",
+              style: TextStyle(color: HermesTheme.textDim, fontSize: 12.5),
+            ),
+            const SizedBox(height: 20),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 1.55,
+              children: quickCards.map((card) {
+                return InkWell(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    card.onTap();
+                  },
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: HermesTheme.surfaceElevated,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: HermesTheme.borderSubtle),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: card.color.withOpacity(0.14),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(card.icon, size: 16, color: card.color),
+                            ),
+                            const Spacer(),
+                            const Icon(Icons.arrow_outward_rounded,
+                                size: 13, color: HermesTheme.textDim),
+                          ],
+                        ),
+                        const Spacer(),
+                        Text(
+                          card.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: HermesTheme.textMain,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          card.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: HermesTheme.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1886,19 +2111,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // 消息流列表
           Positioned.fill(
             child: _loadingHistory
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(strokeWidth: 2, color: HermesTheme.primary),
-                        SizedBox(height: 14),
-                        Text(
-                          "正在同步云端指令记录...",
-                          style: TextStyle(color: HermesTheme.textMuted, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  )
+                ? const ChatShimmerSkeleton()
                 : _loadHistoryError != null
                     ? Center(
                         child: Column(
@@ -1924,33 +2137,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       )
                     : _messages.isEmpty && !_hasOlder
-                        ? Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 64,
-                                  height: 64,
-                                  decoration: BoxDecoration(
-                                    color: HermesTheme.surfaceLight,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: HermesTheme.border),
-                                  ),
-                                  child: const Icon(Icons.code_rounded, size: 32, color: HermesTheme.primary),
-                                ),
-                                const SizedBox(height: 16),
-                                const Text(
-                                  "Hermes Agent 已就绪",
-                                  style: TextStyle(color: HermesTheme.textMain, fontSize: 16, fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  "输入指令下发任务，或点击快捷运维芯片",
-                                  style: TextStyle(color: HermesTheme.textDim, fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          )
+                        ? _buildEmptyWelcomeState()
                         : NotificationListener<UserScrollNotification>(
                             onNotification: (notification) {
                               // 列表为 reverse 布局：offset 0 即为最新消息所在的底部
@@ -2068,7 +2255,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 child: Column(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
                                                   children: [
-                                                    // 用户上传的附件胶囊
+                                                    // 用户上传的附件胶囊 / 缩略图预览
                                                     if (isUser && msg.attachments.isNotEmpty)
                                                       Padding(
                                                         padding: const EdgeInsets.only(bottom: 8),
@@ -2076,6 +2263,25 @@ class _ChatScreenState extends State<ChatScreen> {
                                                           spacing: 6,
                                                           runSpacing: 6,
                                                           children: msg.attachments.map((name) {
+                                                            final imgBytes = _imageAttachmentBytes[name];
+                                                            if (imgBytes != null) {
+                                                              return GestureDetector(
+                                                                onTap: () => FullScreenImageViewer.show(
+                                                                  context,
+                                                                  title: name,
+                                                                  bytes: imgBytes,
+                                                                ),
+                                                                child: ClipRRect(
+                                                                  borderRadius: BorderRadius.circular(8),
+                                                                  child: Image.memory(
+                                                                    imgBytes,
+                                                                    width: 110,
+                                                                    height: 110,
+                                                                    fit: BoxFit.cover,
+                                                                  ),
+                                                                ),
+                                                              );
+                                                            }
                                                             return Container(
                                                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                                               decoration: BoxDecoration(
@@ -2096,57 +2302,72 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     ),
                                                                   ),
                                                                 ],
-                                                             ),
+                                                              ),
                                                             );
                                                           }).toList(),
                                                         ),
                                                       ),
 
-                                                    // 正文内容
+                                                    // 正文内容 (增强代码块一键复制/执行与流式极光指示器)
                                                     if (isUser)
                                                       SelectableText(
                                                         msg.content,
                                                         style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.45),
                                                       )
                                                     else
-                                                      MarkdownBody(
-                                                        data: msg.content.isEmpty && msg.isStreaming ? "▌" : msg.content,
-                                                        selectable: true,
-                                                        styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                                                          p: const TextStyle(fontSize: 14, color: HermesTheme.textMain, height: 1.55),
-                                                          code: const TextStyle(
-                                                            fontFamily: 'monospace',
-                                                            backgroundColor: HermesTheme.surfaceLight,
-                                                            fontSize: 12.5,
-                                                            color: HermesTheme.accent,
-                                                          ),
-                                                          codeblockDecoration: BoxDecoration(
-                                                            color: HermesTheme.surface,
-                                                            borderRadius: BorderRadius.circular(8),
-                                                            border: Border.all(color: HermesTheme.borderSubtle),
-                                                          ),
-                                                        ),
+                                                      HermesRichMarkdownView(
+                                                        data: msg.content,
+                                                        isStreaming: msg.isStreaming,
+                                                        onRunCommand: (cmd) => _sendMessageWithAttachments(cmd, const []),
                                                       ),
                                                   ],
                                                 ),
                                               ),
 
-                                            // 消息下方操作按钮栏 (复制/分享/重试)
+                                            // 消息下方操作按钮栏 (时间戳 / 复制 / 引用追问 / 分享 / 重试)
                                             if (!msg.isStreaming)
                                               Padding(
                                                 padding: const EdgeInsets.only(top: 4),
                                                 child: Row(
                                                   mainAxisSize: MainAxisSize.min,
                                                   children: [
+                                                    Text(
+                                                      msg.timeFormatted,
+                                                      style: const TextStyle(
+                                                        fontSize: 10,
+                                                        color: HermesTheme.textDim,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 4),
                                                     IconButton(
                                                       icon: const Icon(Icons.copy_rounded, size: 14, color: HermesTheme.textDim),
                                                       tooltip: isUser ? "复制指令" : "复制回答",
                                                       visualDensity: VisualDensity.compact,
-                                                      onPressed: () => _copyToClipboard(
-                                                        msg.content,
-                                                        isUser ? "已复制指令内容" : "已复制回答内容",
-                                                      ),
+                                                      onPressed: () {
+                                                        HapticFeedback.lightImpact();
+                                                        _copyToClipboard(
+                                                          msg.content,
+                                                          isUser ? "已复制指令内容" : "已复制回答内容",
+                                                        );
+                                                      },
                                                     ),
+                                                    if (msg.content.trim().isNotEmpty)
+                                                      IconButton(
+                                                        icon: const Icon(Icons.format_quote_rounded, size: 15, color: HermesTheme.textDim),
+                                                        tooltip: "引用追问",
+                                                        visualDensity: VisualDensity.compact,
+                                                        onPressed: () {
+                                                          final id = _activeSession?.id;
+                                                          if (id == null) return;
+                                                          HapticFeedback.selectionClick();
+                                                          final snippet = msg.content.trim();
+                                                          setState(() {
+                                                            _replyQuotes[id] = snippet.length > 140
+                                                                ? '${snippet.substring(0, 140)}...'
+                                                                : snippet;
+                                                          });
+                                                        },
+                                                      ),
                                                     if (!isUser) ...[
                                                       IconButton(
                                                         icon: const Icon(Icons.share_outlined, size: 14, color: HermesTheme.textDim),
@@ -2273,6 +2494,13 @@ class _ChatScreenState extends State<ChatScreen> {
               isStreaming: _isCurrentlyStreaming,
               onStop: _stopGeneration,
               onOpenLiveVoice: _openLiveVoice,
+              replyQuote: _replyQuotes[_activeSession?.id],
+              onClearReplyQuote: () {
+                final id = _activeSession?.id;
+                if (id != null) {
+                  setState(() => _replyQuotes.remove(id));
+                }
+              },
             ),
           ),
         ],

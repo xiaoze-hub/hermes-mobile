@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/theme.dart';
 import 'slash_command_palette.dart';
+import 'markdown_code_builder.dart';
 
 class ChatPickedFile {
   final String name;
@@ -22,6 +23,8 @@ class ChatInputBar extends StatefulWidget {
   final ValueChanged<String>? onDraftTextChanged;
   final ValueChanged<List<ChatPickedFile>>? onDraftAttachmentsChanged;
   final VoidCallback? onOpenLiveVoice;
+  final String? replyQuote;
+  final VoidCallback? onClearReplyQuote;
 
   const ChatInputBar({
     super.key,
@@ -35,6 +38,8 @@ class ChatInputBar extends StatefulWidget {
     this.onDraftTextChanged,
     this.onDraftAttachmentsChanged,
     this.onOpenLiveVoice,
+    this.replyQuote,
+    this.onClearReplyQuote,
   });
 
   @override
@@ -185,6 +190,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   Future<void> _handleSend() async {
     final text = _controller.text.trim();
     if ((text.isEmpty && _attachments.isEmpty) || !widget.isConnected || _sending) return;
+    HapticFeedback.lightImpact();
     setState(() => _sending = true);
     try {
       final sent = await widget.onSend(text, List.unmodifiable(_attachments));
@@ -214,6 +220,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _applyMacro(String cmd) {
+    HapticFeedback.selectionClick();
     _controller.text = cmd;
     _controller.selection = TextSelection.fromPosition(TextPosition(offset: cmd.length));
     widget.onDraftTextChanged?.call(cmd);
@@ -471,7 +478,50 @@ class _ChatInputBarState extends State<ChatInputBar> {
             ),
             const SizedBox(height: 6),
 
-            // 2. 附件缩略图预览栏 (Attachments Strip)
+            // 2. 引用追问横幅 (Reply / Quote Banner)
+            if (widget.replyQuote != null && widget.replyQuote!.trim().isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: HermesTheme.surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                  border: const Border(
+                    left: BorderSide(color: HermesTheme.accent, width: 3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.format_quote_rounded,
+                        size: 15, color: HermesTheme.accent),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        widget.replyQuote!.replaceAll('\n', ' '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: HermesTheme.textMuted,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: widget.onClearReplyQuote,
+                      borderRadius: BorderRadius.circular(8),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.close_rounded,
+                            size: 15, color: HermesTheme.textDim),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // 2.5 附件缩略图预览栏 (Attachments Strip，支持点击全屏缩放预览)
             if (_attachments.isNotEmpty)
               Container(
                 height: 48,
@@ -484,51 +534,61 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     final file = _attachments[index];
                     final isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'].contains(file.extension);
 
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: HermesTheme.surfaceLight,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: HermesTheme.borderSubtle),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (isImage)
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(4),
-                              child: Image.memory(
-                                file.bytes,
-                                width: 28,
-                                height: 28,
-                                fit: BoxFit.cover,
+                    return InkWell(
+                      onTap: isImage
+                          ? () => FullScreenImageViewer.show(
+                                context,
+                                title: file.name,
+                                bytes: file.bytes,
+                              )
+                          : null,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: HermesTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: HermesTheme.borderSubtle),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isImage)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(5),
+                                child: Image.memory(
+                                  file.bytes,
+                                  width: 30,
+                                  height: 30,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            else
+                              Icon(
+                                file.extension == 'pdf' ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_rounded,
+                                size: 18,
+                                color: HermesTheme.cyan,
                               ),
-                            )
-                          else
-                            Icon(
-                              file.extension == 'pdf' ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_rounded,
-                              size: 18,
-                              color: HermesTheme.cyan,
+                            const SizedBox(width: 6),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 110),
+                              child: Text(
+                                file.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11, color: HermesTheme.textMain),
+                              ),
                             ),
-                          const SizedBox(width: 6),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 110),
-                            child: Text(
-                              file.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11, color: HermesTheme.textMain),
+                            const SizedBox(width: 4),
+                            InkWell(
+                              onTap: _sending ? null : () {
+                                setState(() => _attachments.removeAt(index));
+                                widget.onDraftAttachmentsChanged?.call(List.unmodifiable(_attachments));
+                              },
+                              child: const Icon(Icons.close_rounded, size: 14, color: HermesTheme.textDim),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          InkWell(
-                            onTap: _sending ? null : () {
-                              setState(() => _attachments.removeAt(index));
-                              widget.onDraftAttachmentsChanged?.call(List.unmodifiable(_attachments));
-                            },
-                            child: const Icon(Icons.close_rounded, size: 14, color: HermesTheme.textDim),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   },

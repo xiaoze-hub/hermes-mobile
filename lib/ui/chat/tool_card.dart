@@ -88,7 +88,10 @@ class _ToolCardState extends State<ToolCard> {
         children: [
           // 1. 顶部极简状态条 (Collapsed Header - 始终展示，轻量优雅)
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: () {
+              HapticFeedback.selectionClick();
+              setState(() => _expanded = !_expanded);
+            },
             borderRadius: BorderRadius.circular(13),
             splashColor: accentColor.withOpacity(0.08),
             child: Padding(
@@ -217,166 +220,172 @@ class _ToolCardState extends State<ToolCard> {
             ),
           ),
 
-          // 2. 展开后的技术详情 (Progressive Disclosure - 点击展开才呈现)
-          AnimatedCrossFade(
-            firstChild: const SizedBox.shrink(),
-            secondChild: Container(
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(
-                    color: HermesTheme.borderSubtle,
-                    width: 0.8,
-                  ),
-                ),
-              ),
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 指令内容呈现 (人性化终端栏)
-                  if (tool.arguments.isNotEmpty) ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // 2. 展开后的技术详情 (惰性按需渲染：未展开时零构建开销，保证长列表 60fps 滑动)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: !_expanded
+                ? const SizedBox(width: double.infinity, height: 0)
+                : Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      border: Border(
+                        top: BorderSide(
+                          color: HermesTheme.borderSubtle,
+                          width: 0.8,
+                        ),
+                      ),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '执行指令与参数',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: HermesTheme.textMuted,
+                        // 指令内容呈现 (人性化终端栏)
+                        if (tool.arguments.isNotEmpty) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                '执行指令与参数',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: HermesTheme.textMuted,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.copy_rounded,
+                                    size: 13, color: HermesTheme.textDim),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: '复制指令',
+                                onPressed: () =>
+                                    _copyText(tool.humanActionSummary, '指令'),
+                              ),
+                            ],
                           ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy_rounded,
-                              size: 13, color: HermesTheme.textDim),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          tooltip: '复制指令',
-                          onPressed: () =>
-                              _copyText(tool.humanActionSummary, '指令'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0C101A),
-                        borderRadius: BorderRadius.circular(9),
-                        border: Border.all(color: HermesTheme.borderSubtle),
-                      ),
-                      child: SelectableText(
-                        tool.humanActionSummary,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11.5,
-                          color: HermesTheme.textMain,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  // 产出展示：Diff 差异卡片 或 ANSI 终端日志
-                  if (hasResult) ...[
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          tool.isDiff ? '代码变更对比 (Diff)' : '执行日志与输出',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: HermesTheme.textMuted,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy_rounded,
-                              size: 13, color: HermesTheme.textDim),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          tooltip: '复制输出结果',
-                          onPressed: () => _copyText(tool.result!, '输出日志'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    if (tool.isDiff)
-                      DiffCardView(diffText: tool.result!)
-                    else
-                      Container(
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: SingleChildScrollView(
-                          child: AnsiTerminalView(
-                            text: tool.result!,
-                            maxLines: null,
-                          ),
-                        ),
-                      ),
-                  ],
-
-                  // 3. 底层 Raw JSON 调试参数 (渐进折叠收纳)
-                  const SizedBox(height: 8),
-                  InkWell(
-                    onTap: () => setState(() => _showRawJson = !_showRawJson),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _showRawJson
-                                ? Icons.arrow_drop_down_rounded
-                                : Icons.arrow_right_rounded,
-                            size: 16,
-                            color: HermesTheme.textDim,
-                          ),
-                          Text(
-                            _showRawJson ? '收起底层参数 (JSON)' : '查看底层参数 (JSON)',
-                            style: const TextStyle(
-                              fontSize: 10.5,
-                              color: HermesTheme.textDim,
+                          const SizedBox(height: 5),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0C101A),
+                              borderRadius: BorderRadius.circular(9),
+                              border:
+                                  Border.all(color: HermesTheme.borderSubtle),
+                            ),
+                            child: SelectableText(
+                              tool.humanActionSummary,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11.5,
+                                color: HermesTheme.textMain,
+                                height: 1.4,
+                              ),
                             ),
                           ),
                         ],
-                      ),
+
+                        // 产出展示：Diff 差异卡片 或 ANSI 终端日志
+                        if (hasResult) ...[
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                tool.isDiff ? '代码变更对比 (Diff)' : '执行日志与输出',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: HermesTheme.textMuted,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.copy_rounded,
+                                    size: 13, color: HermesTheme.textDim),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                tooltip: '复制输出结果',
+                                onPressed: () =>
+                                    _copyText(tool.result!, '输出日志'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          if (tool.isDiff)
+                            DiffCardView(diffText: tool.result!)
+                          else
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 220),
+                              child: SingleChildScrollView(
+                                child: AnsiTerminalView(
+                                  text: tool.result!,
+                                  maxLines: null,
+                                ),
+                              ),
+                            ),
+                        ],
+
+                        // 3. 底层 Raw JSON 调试参数 (渐进折叠收纳)
+                        const SizedBox(height: 8),
+                        InkWell(
+                          onTap: () =>
+                              setState(() => _showRawJson = !_showRawJson),
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _showRawJson
+                                      ? Icons.arrow_drop_down_rounded
+                                      : Icons.arrow_right_rounded,
+                                  size: 16,
+                                  color: HermesTheme.textDim,
+                                ),
+                                Text(
+                                  _showRawJson
+                                      ? '收起底层参数 (JSON)'
+                                      : '查看底层参数 (JSON)',
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    color: HermesTheme.textDim,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        if (_showRawJson) ...[
+                          const SizedBox(height: 4),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF080B12),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: HermesTheme.borderSubtle
+                                      .withOpacity(0.5)),
+                            ),
+                            child: SelectableText(
+                              _prettifyJson(tool.arguments),
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 10,
+                                color: HermesTheme.textMuted,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-
-                  if (_showRawJson) ...[
-                    const SizedBox(height: 4),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF080B12),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: HermesTheme.borderSubtle.withOpacity(0.5)),
-                      ),
-                      child: SelectableText(
-                        _prettifyJson(tool.arguments),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          color: HermesTheme.textMuted,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            crossFadeState: _expanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 220),
           ),
         ],
       ),

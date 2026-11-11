@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/project.dart';
 import '../models/kanban_task.dart';
+import '../models/chat_message.dart';
 
 class GatewayConfig {
   final String serverUrl;
@@ -364,5 +365,46 @@ class HermesStorage {
   Future<void> setHighRiskApprovalEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('hermes_pref_high_risk_approval', enabled);
+  }
+
+  // --- 会话本地秒开缓存 (Stale-While-Revalidate) ---
+  Future<List<ChatMessage>> getCachedSessionMessages(String sessionId) async {
+    if (sessionId.isEmpty) return [];
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('hermes_msg_cache_$sessionId');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return list
+          .whereType<Map>()
+          .map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveCachedSessionMessages(
+      String sessionId, List<ChatMessage> messages) async {
+    if (sessionId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final recent = messages.length > 40
+        ? messages.sublist(messages.length - 40)
+        : messages;
+    await prefs.setString(
+      'hermes_msg_cache_$sessionId',
+      jsonEncode(recent.map((m) => m.toJson()).toList()),
+    );
+
+    // 维护最多 12 个活跃会话缓存索引，自动淘汰过旧缓存
+    final keys =
+        (prefs.getStringList('hermes_msg_cache_lru') ?? []).toList();
+    keys.remove(sessionId);
+    keys.add(sessionId);
+    while (keys.length > 12) {
+      final evicted = keys.removeAt(0);
+      await prefs.remove('hermes_msg_cache_$evicted');
+    }
+    await prefs.setStringList('hermes_msg_cache_lru', keys);
   }
 }

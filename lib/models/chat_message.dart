@@ -36,6 +36,26 @@ class ToolCallInfo {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'arguments': arguments,
+        'result': result,
+        'isRunning': false,
+        'startedAt': startedAt.toIso8601String(),
+      };
+
+  factory ToolCallInfo.fromJson(Map<String, dynamic> map) => ToolCallInfo(
+        id: map['id']?.toString() ?? '',
+        name: map['name']?.toString() ?? 'tool',
+        arguments: map['arguments']?.toString() ?? '',
+        result: map['result']?.toString(),
+        isRunning: false,
+        startedAt: map['startedAt'] != null
+            ? DateTime.tryParse(map['startedAt'].toString())
+            : null,
+      );
+
   ToolCategory get category {
     final lower = name.toLowerCase();
     if (lower.contains('subagent') ||
@@ -378,6 +398,63 @@ class ChatMessage {
           : (raw['created_at'] != null
               ? DateTime.tryParse(raw['created_at'].toString())
               : null),
+    );
+  }
+
+  String get timeFormatted {
+    final local = createdAt.toLocal();
+    final now = DateTime.now();
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    if (local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day) {
+      return '$hh:$mm';
+    }
+    final mo = local.month.toString().padLeft(2, '0');
+    final dd = local.day.toString().padLeft(2, '0');
+    return '$mo-$dd $hh:$mm';
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'role': role.name,
+        'content': content,
+        'thinking': thinking,
+        'attachments': attachments,
+        'toolCalls': toolCalls.map((t) => t.toJson()).toList(),
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory ChatMessage.fromJson(Map<String, dynamic> map) {
+    final roleName = map['role']?.toString() ?? 'assistant';
+    final role = MessageRole.values.firstWhere(
+      (r) => r.name == roleName,
+      orElse: () => MessageRole.assistant,
+    );
+    final rawAttachments = map['attachments'];
+    final attachments = rawAttachments is List
+        ? rawAttachments.map((e) => e.toString()).toList()
+        : const <String>[];
+    final rawTools = map['toolCalls'];
+    final tools = rawTools is List
+        ? rawTools
+            .whereType<Map>()
+            .map((e) => ToolCallInfo.fromJson(Map<String, dynamic>.from(e)))
+            .toList()
+        : <ToolCallInfo>[];
+    return ChatMessage(
+      id: map['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      role: role,
+      content: map['content']?.toString() ?? '',
+      thinking: map['thinking']?.toString() ?? '',
+      attachments: attachments,
+      toolCalls: tools,
+      isStreaming: false,
+      createdAt: map['createdAt'] != null
+          ? DateTime.tryParse(map['createdAt'].toString())
+          : null,
     );
   }
 }
