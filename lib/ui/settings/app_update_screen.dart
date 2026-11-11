@@ -258,7 +258,10 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
     final path = _apkPath;
     if (path == null) return;
     try {
-      final result = await _channel.invokeMethod<String>('installApk', {'path': path});
+      final result = await _channel.invokeMethod<dynamic>(
+        'installApk',
+        {'path': path, 'filePath': path},
+      );
       if (!mounted) return;
       if (result == 'permission_required') {
         setState(() => _installPermissionRequired = true);
@@ -269,9 +272,17 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
         ));
       }
     } on PlatformException catch (e) {
-      if (mounted) {
-        setState(() => _error = '拉起安装器失败: ${e.message ?? e.code}');
+      if (!mounted) return;
+      if (e.code == 'permission_required') {
+        setState(() => _installPermissionRequired = true);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('请在系统设置中允许 Hermes 安装应用，然后返回此页点击“安装更新”'),
+          duration: Duration(seconds: 6),
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
       }
+      setState(() => _error = '拉起安装器失败: ${e.message ?? e.code}');
     }
   }
 
@@ -367,9 +378,37 @@ class _AppUpdateScreenState extends State<AppUpdateScreen> {
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: HermesTheme.danger.withOpacity(0.3)),
                     ),
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(color: HermesTheme.danger, fontSize: 12, height: 1.4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: HermesTheme.danger, fontSize: 12, height: 1.4),
+                        ),
+                        if (release != null) ...[
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              foregroundColor: HermesTheme.accent,
+                              side: const BorderSide(color: HermesTheme.accent, width: 0.8),
+                            ),
+                            onPressed: () {
+                              final rawUrl = release['_apkUrl']?.toString() ?? '';
+                              final fastUrl = 'https://ghfast.top/$rawUrl';
+                              Clipboard.setData(ClipboardData(text: fastUrl));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('已复制极速下载链接，可粘贴到手机浏览器直接下载安装'),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.link_rounded, size: 14),
+                            label: const Text('复制极速下载链接 (浏览器直接安装)', style: TextStyle(fontSize: 11.5)),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],

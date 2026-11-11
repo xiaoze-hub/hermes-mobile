@@ -200,7 +200,7 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
                     }
                 }
                 "installApk" -> {
-                    val filePath = call.argument<String>("filePath")
+                    val filePath = call.argument<String>("path") ?: call.argument<String>("filePath")
                     if (filePath.isNullOrBlank()) {
                         result.error("invalid_path", "APK 路径不能为空", null)
                         return@setMethodCallHandler
@@ -229,7 +229,7 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
                                             data = Uri.parse("package:$packageName")
                                         }
                                         startActivity(intent)
-                                        result.error("permission_required", "需要开启安装未知来源应用权限", null)
+                                        result.success("permission_required")
                                         return@runOnUiThread
                                     }
                                 }
@@ -240,7 +240,7 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
                                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
                                     }
                                     startActivity(intent)
-                                    result.success(true)
+                                    result.success("ok")
                                 } catch (e: Exception) {
                                     result.error("install_failed", e.message, null)
                                 }
