@@ -430,14 +430,47 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> with Single
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabs,
+      body: Column(
         children: [
-          _toolsView(),
-          _memoryView(),
-          _skillsView(),
-          _cronView(),
-          _contextView(),
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: HermesTheme.warning.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: HermesTheme.warning.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded,
+                      size: 16, color: HermesTheme.warning),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                          fontSize: 11.5, color: HermesTheme.textMuted),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _toolsView(),
+                _memoryView(),
+                _skillsView(),
+                _cronView(),
+                _contextView(),
+              ],
+            ),
+          ),
         ],
       ),
     );
