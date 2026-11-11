@@ -1,7 +1,7 @@
 {
-  "version": "1.6.1",
-  "buildNumber": 19,
-  "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/download/v1.6.1/hermes-mobile.apk",
-  "sha256": "2a643dfd2b1a869c3f248cd221074b30805f86be1d4ec9b5ebbc9a472d826461",
-  "notes": "1. 性能与流畅度跃升：流式输出 24ms 帧率缓冲防掉帧、ToolCard 惰性按需渲染、最近会话本地秒开缓存 (0ms 切换)。\n2. 交互体验升级：代码块顶部栏支持「语言标签 + 一键复制代码 + 下发终端执行」，支持「引用追问」、图片附件缩略图与全屏双指缩放预览、侧边栏左右滑动置顶/删除与下拉刷新。\n3. 视觉与细节打磨：新增 2×2 可交互场景启动卡片、微光骨架屏加载过渡、流式极光呼吸指示器与消息精致时间戳。\n4. 修复在线更新安装器路径参数兼容与镜像源版本缓存问题。"
+  "version": "1.7.0",
+  "buildNumber": 20,
+  "apkUrl": "https://github.com/xiaoze-hub/hermes-mobile/releases/download/v1.7.0/hermes-mobile.apk",
+  "sha256": "00e68ce1b4e5114d5c28ca84096b7e63622960f9dede24a8d451f83f7b68755e",
+  "notes": "1. 锁屏与后台常驻保活：特工执行任务时自动启用 Android WakeLock 与常驻通知栏进度条，锁屏或切后台不断连。\n2. Hermes 长期记忆库可视化面板：Agent 特工工作台新增「长期记忆 (Memory)」标签页，支持查看、新增、编辑与删除 MEMORY.md (环境记忆) 与 USER.md (用户偏好)。\n3. 子智能体 (Subagent Swarm) 实时日志监控舱：点击顶部后台任务横幅即可弹出实时执行日志抽屉。\n4. 网关真实 Token 自动记账：每轮对话完成自动累计真实 Token 消耗至算力开销大盘。"
 }
